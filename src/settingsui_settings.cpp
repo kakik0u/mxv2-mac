@@ -181,9 +181,16 @@ void SettingsUi::BuildSettingsWindow(Settings *settings, DrawScreen *draw, Playe
 		"Settings.Skin",       "Settings.SkinPortrait", "Settings.SkinLandscape",
 		"Settings.OrientMode", "Settings.TitleScroll", "Settings.SampleRate",
 		"Settings.Loops",      "Settings.MasterVolume", "Settings.Latency",
+		// 小窓（pip.h）は使える端末でしか出さないので、**末尾に置いて、
+		// 使えないときは数に入れない**（出ない項目の長いラベルで、
+		// パソコンの部品まで細くしないため）。
 		"Settings.Pip",
 	};
-	PushLabeledItemWidth(kItemLabels, (int)(sizeof(kItemLabels) / sizeof(kItemLabels[0])));
+	{
+		int count = (int)(sizeof(kItemLabels) / sizeof(kItemLabels[0]));
+		if (!pip::Available()) count--;
+		PushLabeledItemWidth(kItemLabels, count);
+	}
 
 	// ---- 画面 ----------------------------------------------------------
 	// 見出し (CollapsingHeader) は**畳んだ状態から始まる**（ユーザーの指示、
