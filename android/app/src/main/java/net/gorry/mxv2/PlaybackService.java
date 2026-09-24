@@ -39,11 +39,12 @@ public class PlaybackService extends Service {
 	private static final String CHANNEL_ID = "mxv2.playback";
 	private static final int NOTIFY_ID = 1;
 
-	private static final String ACTION_PREV = "net.gorry.mxv2.action.PREV";
-	private static final String ACTION_PLAY = "net.gorry.mxv2.action.PLAY";
-	private static final String ACTION_PAUSE = "net.gorry.mxv2.action.PAUSE";
-	private static final String ACTION_NEXT = "net.gorry.mxv2.action.NEXT";
-	private static final String ACTION_STOP = "net.gorry.mxv2.action.STOP";
+	// 通知と小窓 (PipBridge) のボタンの行き先。
+	static final String ACTION_PREV = "net.gorry.mxv2.action.PREV";
+	static final String ACTION_PLAY = "net.gorry.mxv2.action.PLAY";
+	static final String ACTION_PAUSE = "net.gorry.mxv2.action.PAUSE";
+	static final String ACTION_NEXT = "net.gorry.mxv2.action.NEXT";
+	static final String ACTION_STOP = "net.gorry.mxv2.action.STOP";
 
 	private Handler mHandler;
 	private MediaSession mSession;
@@ -288,13 +289,17 @@ public class PlaybackService extends Service {
 	}
 
 	private Notification.Action action(int icon, String label, String intentAction) {
-		Intent i = new Intent(this, PlaybackService.class);
-		i.setAction(intentAction);
-		PendingIntent pi =
-		    PendingIntent.getService(this, intentAction.hashCode(), i, pendingIntentFlags());
+		PendingIntent pi = actionIntent(this, intentAction);
 		return new Notification.Action.Builder(
 		           android.graphics.drawable.Icon.createWithResource(this, icon), label, pi)
 		    .build();
+	}
+
+	/** ボタンを押したときにこのサービスへ intentAction を届ける PendingIntent。 */
+	static PendingIntent actionIntent(Context c, String intentAction) {
+		Intent i = new Intent(c, PlaybackService.class);
+		i.setAction(intentAction);
+		return PendingIntent.getService(c, intentAction.hashCode(), i, pendingIntentFlags());
 	}
 
 	/** 通知をタップしたときの行き先。動いているアプリの画面を前へ出す。 */
@@ -306,7 +311,7 @@ public class PlaybackService extends Service {
 		return PendingIntent.getActivity(this, 0, i, pendingIntentFlags());
 	}
 
-	private int pendingIntentFlags() {
+	private static int pendingIntentFlags() {
 		int flags = PendingIntent.FLAG_UPDATE_CURRENT;
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
 			// Android 12 以降は可変・不変のどちらかを必ず指定する。

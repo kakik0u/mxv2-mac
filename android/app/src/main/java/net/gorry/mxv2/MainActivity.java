@@ -25,6 +25,8 @@ public class MainActivity extends SDLActivity {
 		// ファイルマネージャなどから MDX を渡されたときの窓口
 		// （src/openintent.cpp）。
 		OpenIntentBridge.setActivity(this);
+		// 小窓（ピクチャー・イン・ピクチャー）の窓口（src/pip.cpp）。
+		PipBridge.setActivity(this);
 		super.onCreate(savedInstanceState);
 		requestNotificationPermission();
 	}
@@ -41,6 +43,86 @@ public class MainActivity extends SDLActivity {
 		}
 		requestPermissions(new String[] { android.Manifest.permission.POST_NOTIFICATIONS },
 		                   REQUEST_POST_NOTIFICATIONS);
+	}
+
+	// -------------------------------------------------------------------
+	// 小窓（ピクチャー・イン・ピクチャー）。判断は PipBridge、ここは
+	// Activity の出来事を渡すのと、画面の差し替えだけ。memo/pip.md。
+	// -------------------------------------------------------------------
+
+	/** 小窓の中身。初めて小窓に入ったときに作る。 */
+	private PipView mPipView;
+
+	@Override
+	protected void onUserLeaveHint() {
+		super.onUserLeaveHint();
+		PipBridge.onUserLeaveHint();
+	}
+
+	@Override
+	protected void onPause() {
+		super.onPause();
+		PipBridge.onPause();
+	}
+
+	@Override
+	protected void onResume() {
+		super.onResume();
+		PipBridge.onResume();
+	}
+
+	@Override
+	public void onPictureInPictureModeChanged(boolean inPip,
+	                                          android.content.res.Configuration newConfig) {
+		super.onPictureInPictureModeChanged(inPip, newConfig);
+		PipBridge.onModeChanged(inPip);
+	}
+
+	/**
+	 * 自分で別の画面（SAF のフォルダ選択、SDL_OpenURL のブラウザなど）を
+	 * 開くときも onUserLeaveHint が呼ばれる。startActivity もここを通るので、
+	 * 印を立てて小窓に入らないようにする。
+	 */
+	@Override
+	public void startActivityForResult(android.content.Intent intent, int requestCode,
+	                                   android.os.Bundle options) {
+		PipBridge.onLaunchingOwn();
+		super.startActivityForResult(intent, requestCode, options);
+	}
+
+	/**
+	 * 小窓の中身と SDL の面を入れ替える。**面を隠すと SDL は PAUSED に移り**、
+	 * ネイティブは今のバックグラウンドの経路（描かない・演奏は続ける）に入る。
+	 * 面を戻すと RESUMED に戻り、ネイティブが画面を描き直す。
+	 */
+	void showPipContent(boolean on) {
+		if (mLayout == null) return;
+		if (on) {
+			if (mPipView == null) {
+				mPipView = new PipView(this);
+				mLayout.addView(mPipView, new android.view.ViewGroup.LayoutParams(
+				                              android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+				                              android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+			}
+			mPipView.setVisibility(android.view.View.VISIBLE);
+			mPipView.start();
+			if (mSurface != null) mSurface.setVisibility(android.view.View.GONE);
+		} else {
+			if (mSurface != null) mSurface.setVisibility(android.view.View.VISIBLE);
+			if (mPipView != null) {
+				mPipView.stop();
+				mPipView.setVisibility(android.view.View.GONE);
+			}
+		}
+	}
+
+	/** 次のレイアウトのあとで r を走らせる。 */
+	void postToLayout(Runnable r) {
+		if (mLayout != null) mLayout.post(r);
+	}
+
+	void postToLayoutDelayed(Runnable r, long delayMs) {
+		if (mLayout != null) mLayout.postDelayed(r, delayMs);
 	}
 
 	@Override

@@ -3,6 +3,7 @@ package net.gorry.mxv2;
 import android.app.Activity;
 import android.content.Intent;
 import android.os.Build;
+import android.os.SystemClock;
 import android.util.Log;
 
 import java.util.ArrayDeque;
@@ -54,11 +55,15 @@ public class PlaybackBridge {
 	private static String sStopLabel = "Stop";
 
 	// いま出す内容。
+	/** 曲を持っている（update で立ち、shutdown で下りる）。小窓が見る。 */
+	private static boolean sActive;
 	private static String sTitle = "";
 	private static String sText = "";
 	private static boolean sPlaying;
 	private static long sPosMs;
 	private static long sDurMs;
+	/** sPosMs を受け取った時刻 (SystemClock.elapsedRealtime)。小窓が位置を進めるのに使う。 */
+	private static long sStampMs;
 
 	private static final ArrayDeque<Integer> sRequests = new ArrayDeque<Integer>();
 
@@ -100,6 +105,8 @@ public class PlaybackBridge {
 		if (a == null) return;
 
 		synchronized (PlaybackBridge.class) {
+			sActive = true;
+			sStampMs = SystemClock.elapsedRealtime();
 			sTitle = title;
 			sText = text;
 			sPlaying = playing;
@@ -120,15 +127,22 @@ public class PlaybackBridge {
 					Log.w(TAG, "cannot start the playback service", e);
 					sStarted = false;
 				}
+				PipBridge.onStateChanged();
 				return;  // 起動時に onStartCommand が出す
 			}
 		}
 		refresh();
+		// 小窓のボタン（一時停止 / 再開）と、自動で入るかどうか。
+		PipBridge.onStateChanged();
 	}
 
 	/** 通知を消してサービスを止める。 */
 	public static void shutdown() {
 		final Activity a = sActivity;
+		synchronized (PlaybackBridge.class) {
+			sActive = false;
+		}
+		PipBridge.onStateChanged();
 		synchronized (PlaybackBridge.class) {
 			if (!sStarted) return;
 			sStarted = false;
@@ -186,11 +200,13 @@ public class PlaybackBridge {
 		s.pauseLabel = sPauseLabel;
 		s.nextLabel = sNextLabel;
 		s.stopLabel = sStopLabel;
+		s.active = sActive;
 		s.title = sTitle;
 		s.text = sText;
 		s.playing = sPlaying;
 		s.posMs = sPosMs;
 		s.durMs = sDurMs;
+		s.stampMs = sStampMs;
 		return s;
 	}
 
@@ -202,10 +218,12 @@ public class PlaybackBridge {
 		String pauseLabel;
 		String nextLabel;
 		String stopLabel;
+		boolean active;
 		String title;
 		String text;
 		boolean playing;
 		long posMs;
 		long durMs;
+		long stampMs;
 	}
 }

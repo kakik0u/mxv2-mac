@@ -71,6 +71,11 @@ struct Settings {
 	// kTouchAuto なら Screen::TouchPreferred() に従う（Android は有効）。
 	int touchUi;
 	enum TouchUi { kTouchAuto = 0, kTouchOn = 1, kTouchOff = 2 };
+	// ホームへ戻ったときに小窓（ピクチャー・イン・ピクチャー）で出すか
+	// （Android だけ。pip.h / memo/pip.md）。ini は [Screen] Pip。
+	// 値は Java の PipBridge.MODE_* と同じ並び。
+	int pipMode;
+	enum PipMode { kPipOff = 0, kPipPlaying = 1, kPipAlways = 2, kNumPipModes };
 
 	// [Filer]
 	int fileListFontSize;  // 0 = 小 / 1 = 大 (旧 mxv の FontSize)
@@ -198,6 +203,7 @@ struct Settings {
 		kFieldFullScreen = 1 << 22,
 		kFieldUpdateCheck = 1 << 23,     // [Network] UpdateCheck
 		kFieldUpdateSchedule = 1 << 24,  // [Network] NextUpdateCheck
+		kFieldPip = 1 << 25,             // [Screen] Pip
 	};
 
 	Settings();

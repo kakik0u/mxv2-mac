@@ -15,6 +15,7 @@
 
 #include "drawscreen.h"
 #include "filer.h"
+#include "pip.h"
 #include "player.h"
 #include "screen.h"
 #include "settings.h"
@@ -180,6 +181,7 @@ void SettingsUi::BuildSettingsWindow(Settings *settings, DrawScreen *draw, Playe
 		"Settings.Skin",       "Settings.SkinPortrait", "Settings.SkinLandscape",
 		"Settings.OrientMode", "Settings.TitleScroll", "Settings.SampleRate",
 		"Settings.Loops",      "Settings.MasterVolume", "Settings.Latency",
+		"Settings.Pip",
 	};
 	PushLabeledItemWidth(kItemLabels, (int)(sizeof(kItemLabels) / sizeof(kItemLabels[0])));
 
@@ -348,6 +350,28 @@ void SettingsUi::BuildSettingsWindow(Settings *settings, DrawScreen *draw, Playe
 			} else {
 				TextNote(Msg("Settings.TouchOffNow"));
 			}
+		}
+
+		// ホームへ戻ったときに小窓で出すか（Android だけ。memo/pip.md）。
+		// 小窓の無い端末では項目ごと出さない。
+		if (pip::Available()) {
+			static const char *const kKeys[Settings::kNumPipModes] = {
+				"Settings.PipOff", "Settings.PipPlaying", "Settings.PipAlways",
+			};
+			int mode = settings->pipMode;
+			if (mode < 0 || mode >= Settings::kNumPipModes) mode = Settings::kPipPlaying;
+			if (ImGui::BeginCombo(Msg("Settings.Pip"), Msg(kKeys[mode]))) {
+				for (int i = 0; i < Settings::kNumPipModes; i++) {
+					const bool selected = (i == mode);
+					if (ImGui::Selectable(Msg(kKeys[i]), selected)) {
+						settings->pipMode = i;
+						changedFields_ |= Settings::kFieldPip;
+					}
+					if (selected) ImGui::SetItemDefaultFocus();
+				}
+				ImGui::EndCombo();
+			}
+			TextNote(Msg("Settings.PipNote"));
 		}
 		GroupTrailingSpace();
 	}

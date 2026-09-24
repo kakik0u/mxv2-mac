@@ -1047,3 +1047,16 @@ File Manager+ や MediaStore の URI ではピッカーが前回の場所から�
 以前は `Vfs::Add` が重複で失敗して `fsError_`（「その場所はすでにあります」）を
 立てるだけだったので、**次に [ファイルシステムの設定] を開いたときに古い誤りの
 文言が出た**（演奏そのものは `FinishHandedAfterPick` が繋いでいた）。
+
+## 小窓（ピクチャー・イン・ピクチャー）（2026-09-25、ユーザーの指示）
+
+仕様・設計・実機確認は `memo/pip.md`。要点だけ:
+
+- 中身は「通知の mxv2」相当（曲名・状態・時刻・バー）を Java の `PipView` で
+  描く。スキンの画面は出さない（ユーザーの判断）。
+- 小窓の間は SDL の面 (`mSurface`) を `GONE` にする → SDL が
+  `surfaceDestroyed` → `nativePause` → ネイティブは今のバックグラウンドの経路。
+  **ネイティブは描かないので、小さな窓でキャンバスやスキンを組み直さない。**
+- 操作は PiP の `RemoteAction`。行き先は通知と同じ `PlaybackService` の ACTION_*。
+- 自分で別の画面を開くとき（SAF・`SDL_OpenURL`）は `startActivityForResult` の
+  上書きで印を立て、小窓に入らない。

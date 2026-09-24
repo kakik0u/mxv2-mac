@@ -17,6 +17,7 @@
 #include "imgui_internal.h"
 #include "drawscreen.h"
 #include "filer.h"
+#include "pip.h"
 #include "player.h"
 #include "screen.h"
 #include "settings.h"
@@ -95,6 +96,12 @@ void SettingsUi::BuildCtxPageItems(int page, bool paged, Settings *settings, Dra
 		}
 		if (CtxMenuItem(Msg("Menu.RegMap"), "F8", draw->regMapVisible(), true)) {
 			draw->ToggleRegMap();
+		}
+		// 小窓で表示（Android だけ。memo/pip.md）。設定が「しない」でも
+		// ここからは入れる。出すものが無い（曲を持っていない）ときは押せない。
+		if (pip::Available() &&
+		    CtxMenuItem(Msg("Menu.Pip"), NULL, false, player != 0 && player->playing())) {
+			request_ = kRequestEnterPip;
 		}
 		if (paged) {
 			ImGui::Separator();

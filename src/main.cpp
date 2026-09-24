@@ -31,6 +31,7 @@
 #include "mouse.h"
 #include "nowplaying.h"
 #include "openintent.h"
+#include "pip.h"
 #include "player.h"
 #include "safaccess.h"
 #include "screen.h"
@@ -745,6 +746,8 @@ int main(int argc, char **argv) {
 	// 演奏状態の通知（Android）に出す文言。Java 側には文言を持たせず、
 	// message.ini から引いたものを渡す。
 	SetNotifyLabels();
+	// ホームへ戻ったときに小窓で出すか（Android。pip.h）。
+	mxv2::pip::SetMode(settings.pipMode);
 
 	if (!startFile.empty()) StartPlay(ctx, startFile);
 
@@ -785,12 +788,26 @@ int main(int argc, char **argv) {
 	std::vector<std::string> handedUris;
 	if (!startHandedUri.empty()) handedUris.push_back(startHandedUri);
 
+	// 前のフレームで小窓（pip.h）の出し入れの最中だったか。
+	bool pipWasActive = false;
+
 	while (!quit) {
+		// 小窓（ピクチャー・イン・ピクチャー。memo/pip.md）の出し入れの間は、
+		// 窓の大きさが落ち着いていない。そこで向きを見たりキャンバスを窓へ
+		// 合わせたりすると、**小さな横長の窓を見て横向き用のスキンへ
+		// 切り替えてしまう**ので、どちらもしない。抜けたら合わせ直す。
+		// 小窓の間は SDL の面を隠しているので、描くのはバックグラウンドと
+		// 同じく止まっている。
+		const bool pipActive = mxv2::pip::Active();
+		if (pipWasActive && !pipActive) windowResized = true;
+		pipWasActive = pipActive;
+
 		// 画面の向きが変わったらスキンを取り替える（screen_orientation.md）。
 		// 見るのは窓の縦横比で、端末の「自然な向き」ではない（Screen の
 		// コメント）。「常に切り替える」以外は起動時（と設定を閉じたとき）に
 		// 決めたきりなので、ここでは何もしない。
-		if (orientEnabled && settings.orientationMode == mxv2::Settings::kOrientAlways) {
+		if (orientEnabled && settings.orientationMode == mxv2::Settings::kOrientAlways &&
+		    !pipActive) {
 			const mxv2::Screen::Orientation now = screen.orientation();
 			if (now != orientNow) {
 				orientNow = now;
@@ -881,7 +898,8 @@ int main(int argc, char **argv) {
 		// 窓の大きさが変わっていたらキャンバスを作り直す。イベントごとでは
 		// なくフレームに 1 回にすることが、そのままリサイズ中のデバウンスに
 		// なる。表示倍率やスキンを変えたあとの追随もここが受け持つ。
-		if (windowResized) {
+		// 小窓の出し入れの間は印を立てたまま待つ（上の pipActive）。
+		if (windowResized && !pipActive) {
 			windowResized = false;
 			if (SyncCanvasToWindow(&screen, &textLayer, &draw, &filer, skin)) {
 				player.RequestStatusRefresh();
@@ -1322,6 +1340,7 @@ int main(int argc, char **argv) {
 		}
 
 		newDirt |= ui.TakeChangedFields();
+		if (newDirt & mxv2::Settings::kFieldPip) mxv2::pip::SetMode(settings.pipMode);
 		// [ファイルシステムの設定] は Vfs のマウント一覧を直に触るので、
 		// 書き戻す前にそこから拾い直す。
 		if (newDirt & mxv2::Settings::kFieldFileSystems) {
@@ -1346,6 +1365,10 @@ int main(int argc, char **argv) {
 			// 「どちらで開くか」の答え（渡された MDX。openintent.h）。
 			case mxv2::SettingsUi::kRequestOpenHanded:
 				OpenHandedPath(ctx, &filer, tutorial.active(), ui.requestedHanded());
+				break;
+			// メニューの [小窓で表示]。
+			case mxv2::SettingsUi::kRequestEnterPip:
+				mxv2::pip::Enter();
 				break;
 			default:
 				break;

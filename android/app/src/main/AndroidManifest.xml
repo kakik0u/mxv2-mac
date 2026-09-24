@@ -36,9 +36,23 @@
 			android:label="@string/app_name"
 			android:alwaysRetainTaskState="true"
 			android:launchMode="singleInstance"
-			android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+			android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation|density|fontScale|fontWeightAdjustment"
 			android:preferMinimalPostProcessing="true"
+			android:supportsPictureInPicture="true"
+			android:resizeableActivity="true"
 			android:exported="true">
+			<!-- configChanges: ここに無い種類の設定が変わると Activity が作り直され、
+			     SDL は SDL_main を終わらせてしまう（演奏が止まり、同じプロセスで
+			     最初から起動し直す）。density / fontScale / fontWeightAdjustment は
+			     端末の「表示サイズとテキスト」で変わるもので、SDL の雛形には無いが
+			     足してある（2026-09-25、ユーザーの報告。小窓の最中にフォントサイズを
+			     変えたら演奏が止まった）。どれも mxv2 の描画には関わらない
+			     （拡大率は物理 dpi から、文字は同梱フォントで描く）。小窓の字
+			     (PipView) は描くたびに読み直すので追従する。 -->
+			<!-- supportsPictureInPicture: ホームへ戻ったときなどに、曲名・状態・
+			     時刻を小窓で出し続ける（PipBridge / PipView。memo/pip.md）。
+			     小窓の出入りで Activity が作り直されないのは configChanges の
+			     screenSize|smallestScreenSize|screenLayout|orientation のおかげ。 -->
 			<intent-filter>
 				<action android:name="android.intent.action.MAIN" />
 				<category android:name="android.intent.category.LAUNCHER" />

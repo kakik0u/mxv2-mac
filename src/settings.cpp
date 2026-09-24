@@ -58,6 +58,7 @@ Settings::Settings()
       scaleFilter("sharp"),
       fullScreen(false),
       touchUi(kTouchAuto),
+      pipMode(kPipPlaying),
       fileListFontSize(0),
       folderFirst(false),
       fileListScroll(kScrollCursor),
@@ -109,6 +110,8 @@ bool Settings::Load(const std::string &path) {
 	fullScreen = ini.GetInt("Screen", "FullScreen", fullScreen ? 1 : 0) != 0;
 	touchUi = ini.GetInt("Screen", "TouchUI", touchUi);
 	if (touchUi < kTouchAuto || touchUi > kTouchOff) touchUi = kTouchAuto;
+	pipMode = ini.GetInt("Screen", "Pip", pipMode);
+	if (pipMode < kPipOff || pipMode >= kNumPipModes) pipMode = kPipPlaying;
 
 	fileListFontSize = ini.GetInt("Filer", "FontSize", fileListFontSize) ? 1 : 0;
 	folderFirst = ini.GetInt("Filer", "FolderFirst", folderFirst ? 1 : 0) != 0;
@@ -219,6 +222,7 @@ bool Settings::Save(const std::string &path) const {
 	ini.SetString("Screen", "Filter", scaleFilter);
 	ini.SetInt("Screen", "FullScreen", fullScreen ? 1 : 0);
 	ini.SetInt("Screen", "TouchUI", touchUi);
+	ini.SetInt("Screen", "Pip", pipMode);
 
 	ini.SetInt("Filer", "FontSize", fileListFontSize ? 1 : 0);
 	ini.SetInt("Filer", "FolderFirst", folderFirst ? 1 : 0);
@@ -328,6 +332,7 @@ bool Settings::SaveFields(const std::string &path, unsigned fields) const {
 	if (fields & kFieldFilter) out.scaleFilter = scaleFilter;
 	if (fields & kFieldFullScreen) out.fullScreen = fullScreen;
 	if (fields & kFieldTouchUi) out.touchUi = touchUi;
+	if (fields & kFieldPip) out.pipMode = pipMode;
 	if (fields & kFieldFontSize) out.fileListFontSize = fileListFontSize;
 	if (fields & kFieldFolderFirst) out.folderFirst = folderFirst;
 	if (fields & kFieldFileListScroll) out.fileListScroll = fileListScroll;

@@ -176,6 +176,7 @@ set(MXV2_SOURCES
 	src/nowplaying.cpp
 	src/openintent.cpp
 	src/orientlock.cpp
+	src/pip.cpp
 	src/player.cpp
 	src/safaccess.cpp
 	src/screen.cpp
@@ -226,6 +227,7 @@ set(MXV2_SOURCES
 	src/nowplaying.h
 	src/openintent.h
 	src/orientlock.h
+	src/pip.h
 	src/safaccess.h
 	src/player.h
 	src/screen.h
