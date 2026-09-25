@@ -88,6 +88,55 @@ portable_mdx が同梱する SDL2 2.0.7 (examples/SDL2-2.0.7/*) は mxv2 のビ�
 使わないので、バイナリパッケージには含まれない。
 
 --------------------------------------------------------------------------------
+キャスト（Chromecast へ送る）に使うもの  --  mxv2 に静的リンク
+--------------------------------------------------------------------------------
+メニューの [表示] → [キャスト…] の機能に使う。キャストの機能を組み込まずに
+ビルドしたもの (BUILD.md の MXV2_CAST) には含まれない。
+
+Mbed TLS 3.6.7  --  受信側 (Chromecast) との暗号化通信
+
+    Apache License Version 2.0 (Apache-2.0 と GPL-2.0-or-later のどちらかを
+    選べる二重ライセンスのうち、Apache-2.0 を選んで使う)
+    Copyright The Mbed TLS Contributors
+    https://github.com/Mbed-TLS/mbedtls
+
+    ライセンス全文: third_party/mbedtls-3.6.7/LICENSE
+
+libvpx 1.16.0  --  映像のエンコード (VP8)
+
+    BSD 3-Clause License
+    Copyright (c) 2010, The WebM Project authors. All rights reserved.
+    https://chromium.googlesource.com/webm/libvpx
+
+    ライセンス全文: third_party/vcpkg_installed/<triplet>/share/libvpx/copyright
+    特許の許諾 (Google による VP8 の特許の使用許諾) は libvpx のソースの
+    PATENTS ファイルにある。
+
+Opus 1.5.2  --  音声のエンコード
+
+    BSD 3-Clause License
+    Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic,
+                        Jean-Marc Valin, Timothy B. Terriberry,
+                        CSIRO, Gregory Maxwell, Mark Borgerding,
+                        Erik de Castro Lopo, Mozilla, Amazon
+    https://opus-codec.org/
+
+    ライセンス全文: third_party/vcpkg_installed/<triplet>/share/opus/copyright
+
+libyuv  --  画面の縮小と色の変換
+
+    BSD 3-Clause License
+    Copyright 2011 The LibYuv Project Authors. All rights reserved.
+    https://chromium.googlesource.com/libyuv/libyuv
+
+    ライセンス全文: third_party/vcpkg_installed/<triplet>/share/libyuv/copyright
+
+libvpx / Opus / libyuv は vcpkg でビルドしたもの。<triplet> は
+x64-windows-static-md (Windows)、arm64-android / arm-neon-android (Android)。
+libvpx は vcpkg の移植を Android 向けに直したもの (sdlcastg/ports/libvpx) で
+ビルドしているが、libvpx のソースそのものは改変していない。
+
+--------------------------------------------------------------------------------
 M PLUS 1p Regular  --  assets/MPLUS1p-Regular.ttf として同梱
 --------------------------------------------------------------------------------
 SIL Open Font License, Version 1.1

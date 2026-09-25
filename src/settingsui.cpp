@@ -118,6 +118,7 @@ const char *kAddFsTitle;
 const char *kQuitTitle;
 const char *kHandedTitle;
 const char *kUpdateTitle;
+const char *kCastTitle;
 
 // 題名を作る。id 付きのものは文字列を静的に持ってから返す。
 const char *TitleWithId(const char *key, const char *id) {
@@ -153,6 +154,7 @@ void InitTitles() {
 	kQuitTitle = Msg("Dialog.Quit");
 	kHandedTitle = Msg("Dialog.Handed");
 	kUpdateTitle = Msg("Dialog.Update");
+	kCastTitle = Msg("Dialog.Cast");
 }
 
 // 言語を入れ替えたあと、題名を新しいカタログから取り直す。古いほうの番地は
@@ -416,6 +418,11 @@ SettingsUi::SettingsUi()
       ctxNoShortcut_(false),
       request_(kRequestNone),
       showAbout_(false),
+      showCast_(false),
+      castWasOpen_(false),
+      castSelected_(-1),
+      castLastSize_(0.0f, 0.0f),
+      castRecenter_(false),
       dragScroll_(false),
       dragMoved_(false),
       showColors_(false),
@@ -857,6 +864,7 @@ void SettingsUi::Build(Settings *settings, DrawScreen *draw, Player *player, Fil
 	// 右クリックのメニューとバージョン情報は、設定ウィンドウが閉じていても出す。
 	BuildContextMenu(settings, draw, player, filer);
 	BuildAboutWindow();
+	BuildCastWindow(settings);
 	BuildColorsWindow(settings, draw, player);
 
 	// [言語] で選ばれた言語をここで入れ替える。ダイアログの題名も文言なので、

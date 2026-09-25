@@ -6,6 +6,7 @@
 
 #include <SDL.h>
 
+#include "cast.h"
 #include "cmdline.h"
 #include "drawscreen.h"
 #include "filer.h"
@@ -194,6 +195,7 @@ void ForceRedrawAll(mxv2::Screen *screen, mxv2::TextLayer *textLayer, mxv2::Draw
 	if (!screen->ResetTextures(&err)) printf("warning  : %s\n", err.c_str());
 	if (!textLayer->Rebuild(screen, &err)) printf("warning  : %s\n", err.c_str());
 	ui->HandleDeviceReset();
+	mxv2::cast::ResetRendererTextures();
 	draw->Reload();
 	player->RequestStatusRefresh();
 	*chromeRefresh = true;

@@ -17,6 +17,7 @@
 #include "imgui_internal.h"
 #include "drawscreen.h"
 #include "filer.h"
+#include "cast.h"
 #include "pip.h"
 #include "player.h"
 #include "screen.h"
@@ -102,6 +103,12 @@ void SettingsUi::BuildCtxPageItems(int page, bool paged, Settings *settings, Dra
 		if (pip::Available() &&
 		    CtxMenuItem(Msg("Menu.Pip"), NULL, false, player != 0 && player->playing())) {
 			request_ = kRequestEnterPip;
+		}
+		// Chromecast へ送る（MXV2_CAST 付きでビルドしたときだけ）。送っている間は
+		// チェックが付く。押すとダイアログ（送り先を選ぶ・やめる）。
+		if (cast::Available() &&
+		    CtxMenuItem(Msg("Menu.Cast"), "F9", cast::GetState() != cast::kIdle, true)) {
+			showCast_ = true;
 		}
 		if (paged) {
 			ImGui::Separator();

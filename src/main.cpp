@@ -23,6 +23,7 @@
 
 #include "appprofile.h"  // CMake が Profile.ini から生成する
 #include "assetpath.h"
+#include "cast.h"
 #include "drawscreen.h"
 #include "fileutil.h"
 #include "filer.h"
@@ -169,7 +170,91 @@ unsigned CollectDirtyFields(mxv2::Settings *settings, mxv2::DrawScreen *draw,
 
 // ---- 画面の向きでスキンを切り替える（screen_orientation.md） --------------
 
+// ---- 窓の大きさの知らせを描画スレッドで配り直す（Android） ----------------
+//
+// SDL2 の Android は、窓の大きさの変化を **Java の UI スレッドから** 配る
+// （SDLSurface.surfaceChanged → onNativeResize → SDL_SendWindowEvent）。配る途中で
+// レンダラーの event watch（SDL_RendererEventWatch）が同じ UI スレッドで走り、
+// 描画先を窓へ切り替えて戻し、ビューポートの命令を積む。GL の文脈は描画スレッドの
+// ものなので eglMakeCurrent は EGL_BAD_ACCESS で失敗し、SDL の控え（描画先・
+// 命令の列）だけが描画スレッドと取り合いで書き換わる。素早く縦横を替えると、
+// 画面が上下逆・赤青反転・古い絵のまま固まった（2026-09-25、screen_orientation.md）。
+//
+// 対処: UI スレッドから来た大きさの知らせはイベントフィルターで捨てて印だけ立て、
+// 描画スレッドのフレームの頭で SIZE_CHANGED を積み直す（積み直した知らせでは
+// event watch が描画スレッドで走る）。窓の大きさそのもの（SDL_GetWindowSize）は
+// 捨てる前に SDL が書き換え済み。
+SDL_atomic_t g_resizePending;
+
+#ifdef __ANDROID__
+SDL_threadID g_renderThread = 0;
+
+int SDLCALL ResizeEventFilter(void *, SDL_Event *ev) {
+	if (ev->type == SDL_WINDOWEVENT &&
+	    (ev->window.event == SDL_WINDOWEVENT_RESIZED ||
+	     ev->window.event == SDL_WINDOWEVENT_SIZE_CHANGED) &&
+	    SDL_ThreadID() != g_renderThread) {
+		SDL_AtomicSet(&g_resizePending, 1);
+		return 0;
+	}
+	return 1;
+}
+#endif
+
+void InstallResizeEventFilter() {
+#ifdef __ANDROID__
+	g_renderThread = SDL_ThreadID();
+	SDL_AtomicSet(&g_resizePending, 0);
+	SDL_SetEventFilter(ResizeEventFilter, 0);
+#endif
+}
+
+void RepostResizeEvent(SDL_Window *window) {
+	if (window == 0 || SDL_AtomicSet(&g_resizePending, 0) == 0) return;
+	SDL_Event ev;
+	SDL_zero(ev);
+	ev.type = SDL_WINDOWEVENT;
+	ev.window.windowID = SDL_GetWindowID(window);
+	ev.window.event = SDL_WINDOWEVENT_SIZE_CHANGED;
+	SDL_GetWindowSize(window, &ev.window.data1, &ev.window.data2);
+	SDL_PushEvent(&ev);
+}
+
 }  // namespace
+
+// Chromecast の受信側が終わった（TV で別のアプリにした・受信アプリを閉じた・
+// 切れた）ら、ヘッドホンが抜けたときと同じく一時停止してから後始末する
+// （2026-09-25、ユーザーの指示）。先に止めるのは、後始末で手元の消音が外れて
+// 手元で鳴り出さないようにするため。
+//
+// TV のリモコンの PAUSE / PLAY は、手元の一時停止・再開として扱う（通知の
+// ボタンと同じ）。再開したら TV に今の位置から読み込み直させる（止めていた間も
+// 流れは進むので、そのままだと止めていた長さだけ TV が遅れる）。
+static void PollCast(mxv2::Player *player, bool *pausedByFocus) {
+	switch (mxv2::cast::Poll()) {
+		case mxv2::cast::kEventEnded:
+			*pausedByFocus = false;
+			if (player->playing() && !player->paused()) player->Pause();
+			mxv2::cast::Stop();
+			break;
+		case mxv2::cast::kEventRemotePause:
+			*pausedByFocus = false;
+			if (player->playing() && !player->paused()) player->Pause();
+			break;
+		case mxv2::cast::kEventRemotePlay:
+			*pausedByFocus = false;
+			if (player->paused()) player->Resume();
+			mxv2::cast::ResumeRemote();
+			break;
+		default:
+			// TV で止めたまま手元で再開した（画面の操作・通知のボタン）。TV も今の
+			// 位置から再生させる。
+			if (mxv2::cast::RemotePaused() && player->playing() && !player->paused()) {
+				mxv2::cast::ResumeRemote();
+			}
+			break;
+	}
+}
 
 int main(int argc, char **argv) {
 	// ログの行き先を先に決める。既定ではコンソールを出さない。
@@ -387,6 +472,7 @@ int main(int argc, char **argv) {
 		printf("ERROR: %s\n", mxv2::MsgF("Error.SdlInit", SDL_GetError()).c_str());
 		return EXIT_FAILURE;
 	}
+	InstallResizeEventFilter();
 
 	// オーディオだけ分けて開く。**Android では AAudio を先に試す。**
 	// SDL が既定で選ぶ OpenSL ES は低遅延の "fast track" になり、装置側の
@@ -623,6 +709,12 @@ int main(int argc, char **argv) {
 	}
 
 	mxv2::Player player;
+	// Chromecast へ送る音を横から受け取る（送っていなければ何もしない。cast.h）。
+	// 開く前に付ける。
+	player.SetAudioTap(&mxv2::cast::AudioTap);
+	mxv2::cast::Init();
+	mxv2::cast::SetMuteLocal(settings.castMuteLocal);
+	mxv2::cast::SetVideoAdvanceMs(settings.castVideoAdvanceMs);
 	// 出力レートを変えるときに開き直すので、Config はループの外に置く。
 	mxv2::Player::Config cfg;
 	{
@@ -915,6 +1007,9 @@ int main(int argc, char **argv) {
 			}
 		}
 
+		// UI スレッドから来て捨てた窓の大きさの知らせを、ここ（描画スレッド）で積み直す。
+		RepostResizeEvent(screen.window());
+
 		SDL_Event ev;
 		while (SDL_PollEvent(&ev)) {
 			ui.ProcessEvent(ev);
@@ -1196,6 +1291,9 @@ int main(int argc, char **argv) {
 			PollSong(ctx);
 			PollNotifyRequests(ctx, &filer, &pausedByFocus);
 			PollUnderruns(player, &underrunsSeen, &underrunNextMs);
+			// Chromecast へは音だけ送り続ける（絵は描かないので、受信側には
+			// 最後の絵が出たまま）。受信側が終わったのはここでも拾う。
+			PollCast(&player, &pausedByFocus);
 
 			// 描かないが、ビジュアライズのイベントは食べておく。ためたままに
 			// すると 64K でキューが溢れ、**古いものが残って新しいものが
@@ -1412,10 +1510,17 @@ int main(int argc, char **argv) {
 		fileListRefresh = false;
 
 		draw.BlitTo(&screen);
+		// Chromecast へ送っていれば、このフレームは窓と同じ大きさのテクスチャへ
+		// 描かせる（下の EndFrame で縮めて読み出し、窓へ写す。cast.h）。
+		mxv2::cast::BeginFrame(screen.renderer());
 		screen.Draw();
 		textLayer.Render(&screen);  // 文字は拡大後の解像度で重ねる
 		ui.Render(&screen);
+		// Chromecast へ送っていれば、表示の直前にキャンバスの範囲を渡す
+		// （ダイアログも写る）。30fps に間引くのは sdlcastg。
+		mxv2::cast::EndFrame(screen.renderer(), screen.CanvasRect(), frame, player.sampleRate());
 		screen.Present();
+		PollCast(&player, &pausedByFocus);
 
 		// OS の「フォルダを探す」ダイアログ。開いている間はこちらが止まるので、
 		// 1 フレーム描き終えてから開く。
@@ -1457,6 +1562,12 @@ int main(int argc, char **argv) {
 		printf("warning  : disp event dropped x%u\n", player.dispQueue().dropped());
 	}
 
+	// 送っていれば受信アプリも止める（TV に止まった絵が残らないように）。
+	// **先に演奏を止める。** 止める間（最大 1.5 秒ほど）は手元の音の消音も
+	// 外れるので、鳴っていると手元に音が戻ってきてしまう（2026-09-25、
+	// ユーザーの指摘）。
+	if (mxv2::cast::GetState() != mxv2::cast::kIdle) player.Stop();
+	mxv2::cast::Shutdown();
 	ui.Shutdown();
 	textLayer.Shutdown();
 	player.Close();

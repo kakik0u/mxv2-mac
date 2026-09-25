@@ -25,6 +25,8 @@ mxv2/
         SDL2-2.32.10-src/ SDL2 のソース（Android のときだけ）
         imgui/            Dear ImGui v1.92.4
         portable_mdx/     演奏モジュール
+        mbedtls-3.6.7/    TLS（sdlcastg のときだけ）
+        vcpkg_installed/  libvpx と opus と libyuv（sdlcastg のときだけ。vcpkg で作る）
 ```
 
 いずれも**無改変で置く**。mxv2 側からは参照するだけなので、更新するときは
@@ -106,6 +108,78 @@ git clone --depth 1 https://github.com/yosshin4004/portable_mdx.git third_party/
 mxv2 はそちらを使わない。
 
 `-DPORTABLE_MDX_DIR=<パス>` で別の場所を指定できる。
+
+### mbedTLS 3.6.7（sdlcastg のときだけ）
+
+Chromecast へ送るライブラリ `sdlcastg/`（<https://github.com/gorry/sdlcastg> の写し）が、受信側との
+TLS に使う。mxv2 の [キャスト…]（Chromecast へ送る）に要る。無ければその機能を
+抜いてビルドする（下の `MXV2_CAST`）。
+
+<https://github.com/Mbed-TLS/mbedtls/releases/tag/mbedtls-3.6.7> の
+**`mbedtls-3.6.7.tar.bz2`**（生成済みのファイルが入ったリリース版。git の
+クローンではない）を `third_party/mbedtls-3.6.7/` へ展開する。
+同じページの `mbedtls-3.6.7-sha256sum.txt` で照合できる
+（`a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6`）。
+
+```sh
+tar --force-local -xjf mbedtls-3.6.7.tar.bz2 -C third_party
+```
+
+### libvpx / opus / libyuv（sdlcastg のときだけ）
+
+sdlcastg が映像（VP8）と音声（Opus）のエンコードと、画面の縮小・色の変換
+（libyuv）に使う。libvpx は独自の configure で作るため MSVC や NDK から直には
+ビルドしにくいので、**vcpkg で作る**。入れ先は `third_party/vcpkg_installed/`
+（vcpkg 本体の installed は汚さない）。2026-09-25 の時点で libvpx 1.16.0 /
+opus 1.5.2 / libyuv 1916（libyuv に付いてくる libjpeg-turbo は使わない）。
+
+vcpkg の**クラシックモード**（`--classic`）で入れる。マニフェスト（vcpkg.json）
+で入れると、入れ先に 1 つの triplet しか置けず、Android 向けを入れた時点で
+Windows 向けが消される。
+
+```sh
+# Android 向けを作るときだけ NDK の場所を渡す（/ 区切りで）
+export ANDROID_NDK_HOME=D:/dev/android-ndk
+
+vcpkg install --classic --x-install-root=third_party/vcpkg_installed \
+    --overlay-triplets=sdlcastg/triplets --overlay-ports=sdlcastg/ports \
+    libvpx:x64-windows-static-md opus:x64-windows-static-md libyuv:x64-windows-static-md \
+    libvpx:arm64-android opus:arm64-android libyuv:arm64-android \
+    libvpx:arm-neon-android opus:arm-neon-android libyuv:arm-neon-android
+```
+
+- Windows 向けは静的ライブラリ（CRT は動的。mxv2 と同じ `/MD`）。
+- `sdlcastg/triplets/` は Android 向けの triplet。vcpkg 標準のものとの違いは、
+  **API 21**（mxv2 の minSdk。標準は 28）、C++ の実行時ライブラリが静的
+  （mxv2 と同じ `c++_static`）、NDK のツールチェーンを明示していること
+  （標準のままだとこの版の vcpkg では NDK が見つからなかった）。
+- `sdlcastg/ports/libvpx/` は vcpkg の libvpx の移植を写して直したもの。
+  標準のものは Android を `generic-gnu`（SIMD なしの C だけ）で作るので、
+  ARM は libvpx の Android 用のターゲットで作って **NEON を使う**ようにした
+  （Pixel 7a で測ったら、エンコードの中身がすべて SIMD なしの C で動いていた）。直したところには `sdlcastg:` と
+  書いてある。vcpkg を更新して libvpx の版が上がったら、写し直すこと。
+
+初回は msys2 や nasm も取ってきて、全部で 10 分ほどかかる。
+
+sdlcastg は単独でもビルドできる（見本のコマンド `castplay` などを含む。詳しくは
+`sdlcastg/BUILD.md`）。単独のときの依存の既定の置き場所は `sdlcastg/third_party/`
+なので、mxv2 の中で試すときは mxv2 の `third_party/` を渡す。
+
+```sh
+cmake -S sdlcastg -B build/sdlcastg-win64 -A x64 \
+    -DSDLCASTG_MBEDTLS_DIR=$PWD/third_party/mbedtls-3.6.7 \
+    -DSDLCASTG_VCPKG_INSTALLED_DIR=$PWD/third_party/vcpkg_installed \
+    -DSDLCASTG_SDL2_ROOT=$PWD/third_party/SDL2-2.32.10
+cmake --build build/sdlcastg-win64 --config Release
+build/sdlcastg-win64/Release/castplay.exe --list
+```
+
+mxv2 に組み込むかは CMake の `MXV2_CAST`（`AUTO` / `ON` / `OFF`）。既定の `AUTO` は、
+mbedTLS と、そのプラットフォームの vcpkg の成果物が置いてあれば組み込む
+（configure のログに `mxv2: Chromecast への送信を組み込む` と出る）。組み込まないと
+メニューの [キャスト…] が出ないだけで、ほかは変わらない。
+Android で CMake に引数を足すときは Gradle に `-Pmxv2.cmakeArgs="-DMXV2_CAST=OFF"`
+のように渡す（`mxv2.cmakeArgs` は CMake へ足す引数。空白区切り）。
 
 ### Get Ultimate Sound Amusement with G.
 

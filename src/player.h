@@ -210,6 +210,13 @@ public:
 	void SetDisplayLatency(bool useAuto, int frames);
 
 	uint64_t playedFrames() const { return playedFrames_.load(std::memory_order_acquire); }
+
+	// 装置へ渡す直前の音を横から受け取る（Chromecast へ送る。cast.h）。
+	// オーディオのスレッドから、コールバックのたびに呼ばれる。pcm は int16 の
+	// ステレオで、書き換えてよい（無音にすれば手元では鳴らない）。startFrame は
+	// その頭の playedFrames()。Open() の前に設定すること。
+	typedef void (*AudioTap)(int16_t *pcm, int frames, int sampleRate, uint64_t startFrame);
+	void SetAudioTap(AudioTap tap) { audioTap_ = tap; }
 	uint64_t decodedFrames() const { return decodedFrames_.load(std::memory_order_acquire); }
 
 	DispQueue &dispQueue() { return dispQueue_; }
@@ -235,6 +242,7 @@ private:
 
 	void AudioCallback(uint8_t *stream, int len);
 
+	AudioTap audioTap_;
 	int displayLatencyFrames_;  // Open() で決めた実効値
 	int audioBufferFrames_;     // SDL が返してきたバッファ長
 	int DecodeThreadMain();
@@ -270,6 +278,11 @@ private:
 	std::atomic<bool> decodeRunning_;
 
 	std::atomic<uint64_t> playedFrames_;
+	// 最後のオーディオコールバックが終わったときの playedFrames_ と時刻
+	// （SDL_GetPerformanceCounter。0 なら無し）。visualFrame() がその後の経過を
+	// 足して、コールバックの間も表示の位置を進める。
+	std::atomic<uint64_t> callbackPlayed_;
+	std::atomic<uint64_t> callbackCounter_;
 	std::atomic<uint64_t> decodedFrames_;
 	std::atomic<uint32_t> underruns_;
 	uint64_t decodeCursor_;   // デコードスレッド専用

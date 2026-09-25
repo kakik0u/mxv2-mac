@@ -9,8 +9,15 @@
 | portable_mdx | - | `third_party/portable_mdx/` | `third_party/portable_mdx/readme.md` を参照 | 同左 |
 | M PLUS 1p Regular | 2016 | `assets/MPLUS1p-Regular.ttf` | SIL Open Font License 1.1 | `assets/MPLUS1p-OFL.txt` |
 | Get Ultimate Sound Amusement with G. | 2000 | `assets/mdx/ArctanX` | 個別 | `third_party/GUSA-CDg/ArctanX/readme.txt` |
+| Mbed TLS（キャストのときだけ） | 3.6.7 | `third_party/mbedtls-3.6.7/` | Apache-2.0（Apache-2.0 / GPL-2.0-or-later の二重から選ぶ） | `third_party/mbedtls-3.6.7/LICENSE` |
+| libvpx（キャストのときだけ） | 1.16.0 | `third_party/vcpkg_installed/<triplet>/` | BSD-3-Clause（＋ソースの PATENTS） | `.../share/libvpx/copyright` |
+| Opus（キャストのときだけ） | 1.5.2 | `third_party/vcpkg_installed/<triplet>/` | BSD-3-Clause | `.../share/opus/copyright` |
+| libyuv（キャストのときだけ） | 1916 | `third_party/vcpkg_installed/<triplet>/` | BSD-3-Clause | `.../share/libyuv/copyright` |
 
 いずれも無改変で置いてある。更新するときは差し替えるだけでよい。
+キャストのときだけのもの（CMake の `MXV2_CAST`）は vcpkg でビルドする（BUILD.md）。
+libvpx は vcpkg の移植を Android 向けに直したもの（`sdlcastg/ports/libvpx`）でビルドするが、
+libvpx のソースは改変していない。libyuv に付いてくる libjpeg-turbo はリンクしない。
 場所はすべて `mxv2/` から見た相対パス。
 
 ## それぞれの採用理由

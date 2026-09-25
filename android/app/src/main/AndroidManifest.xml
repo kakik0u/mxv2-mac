@@ -25,6 +25,9 @@
 	<!-- 更新チェック（GitHub Releases API を 1 日 1 回。src/updatecheck.cpp）。
 	     [mxv2 の設定] の [通信] で止められる。 -->
 	<uses-permission android:name="android.permission.INTERNET" />
+	<!-- Chromecast を探す（mDNS）ときに、Wi-Fi のマルチキャストのロックを取る
+	     （sdlcastg の SDLCastG_StartDiscoverySDL。memo/cast.md）。 -->
+	<uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
 	<application android:label="@string/app_name"
 		android:icon="@mipmap/ic_launcher"

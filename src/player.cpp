@@ -89,6 +89,8 @@ Player::Player()
       decodeThread_(0),
       decodeRunning_(false),
       playedFrames_(0),
+      callbackPlayed_(0),
+      callbackCounter_(0),
       decodedFrames_(0),
       underruns_(0),
       decodeCursor_(0),
@@ -96,6 +98,7 @@ Player::Player()
       framesPerPoll_(0),
       maxLoops_(2),
       autoFadeout_(true),
+      audioTap_(0),
       displayLatencyFrames_(0),
       audioBufferFrames_(0),
       statusRefresh_(false),
@@ -304,6 +307,8 @@ void Player::Close() {
 
 void Player::ResetClocks() {
 	playedFrames_.store(0, std::memory_order_release);
+	callbackCounter_.store(0, std::memory_order_release);
+	callbackPlayed_.store(0, std::memory_order_release);
 	decodedFrames_.store(0, std::memory_order_release);
 	underruns_.store(0, std::memory_order_relaxed);
 	decodeCursor_ = 0;
@@ -409,6 +414,8 @@ void Player::WaitForPrefill() {
 // （演奏はそのまま続ける。前面サービスが立っているあいだは OS も止めない）。
 void Player::ResumeAudioDevice() {
 	if (audioDevice_ == 0) return;
+	// 止まっていた間の経過を足さないように、次のコールバックまで控えを捨てる。
+	callbackCounter_.store(0, std::memory_order_release);
 	SDL_PauseAudioDevice(audioDevice_, 0);
 }
 
@@ -618,7 +625,23 @@ void Player::SetDisplayLatency(bool useAuto, int frames) {
 // 実際に鳴っている位置はそこから装置のバッファぶん手前になる。
 // 正の遅らせ量で戻し、負なら逆に進める。
 uint64_t Player::visualFrame() const {
-	const uint64_t played = playedFrames_.load(std::memory_order_acquire);
+	uint64_t played = playedFrames_.load(std::memory_order_acquire);
+	// 再生位置はオーディオのコールバックごと（Android は 2048 フレーム＝43ms）に
+	// しか進まない。そのままだと表示も 43ms ずつ段になり、Chromecast へ送る絵も
+	// その粒でしか変わらない（TV で鍵盤が音より 3〜4f 遅れて見えた。memo/cast.md）。
+	// 最後のコールバックからの経過を、1 回ぶん（装置のバッファ長）まで足す。
+	// 一時停止・停止の間は足さない（鳴っていないので）。
+	if (playing_ && !paused_) {
+		const uint64_t counter = callbackCounter_.load(std::memory_order_acquire);
+		const uint64_t base = callbackPlayed_.load(std::memory_order_acquire);
+		if (counter != 0 && base == played && audioBufferFrames_ > 0) {
+			const uint64_t now = SDL_GetPerformanceCounter();
+			const double sec = (double)(now - counter) / (double)SDL_GetPerformanceFrequency();
+			uint64_t add = (uint64_t)(sec * config_.sampleRate);
+			if (add > (uint64_t)audioBufferFrames_) add = (uint64_t)audioBufferFrames_;
+			played += add;
+		}
+	}
 	const int late = displayLatencyFrames_;
 	if (late <= 0) return played + (uint64_t)(-late);
 	const uint64_t back = (uint64_t)late;
@@ -630,7 +653,20 @@ uint64_t Player::visualFrame() const {
 // ---------------------------------------------------------------------------
 
 void SDLCALL Player::AudioCallbackTrampoline(void *userdata, uint8_t *stream, int len) {
-	((Player *)userdata)->AudioCallback(stream, len);
+	Player *self = (Player *)userdata;
+	const uint64_t start = self->playedFrames_.load(std::memory_order_acquire);
+	self->AudioCallback(stream, len);
+	// visualFrame() がコールバックの間を埋めるための控え。時刻を先に 0 にして
+	// から書き、読む側が「位置と時刻の組」の食い違いを掴まないようにする。
+	self->callbackCounter_.store(0, std::memory_order_release);
+	self->callbackPlayed_.store(self->playedFrames_.load(std::memory_order_acquire),
+	                            std::memory_order_release);
+	self->callbackCounter_.store(SDL_GetPerformanceCounter(), std::memory_order_release);
+	// 取りこぼして無音を返したときも渡す（流れの時計は止めない）。
+	if (self->audioTap_ != 0) {
+		self->audioTap_((int16_t *)stream, len / (2 * (int)sizeof(int16_t)),
+		                self->config_.sampleRate, start);
+	}
 }
 
 void Player::AudioCallback(uint8_t *stream, int len) {

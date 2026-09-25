@@ -4,6 +4,7 @@
 
 #include <string>
 
+#include "cast.h"
 #include "drawscreen.h"
 #include "filer.h"
 #include "mouse.h"
@@ -118,6 +119,10 @@ void HandleKeyDown(const SDL_KeyboardEvent &ev, const InputTargets &t) {
 			break;
 		case SDLK_F8:
 			t.draw->ToggleRegMap();
+			break;
+		// [キャスト]ダイアログ（Chromecast へ送る。組み込んでいなければ何もしない）。
+		case SDLK_F9:
+			if (mxv2::cast::Available()) t.ui->OpenCast();
 			break;
 		case SDLK_F11:
 		case SDLK_h:

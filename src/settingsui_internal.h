@@ -87,6 +87,7 @@ extern const char *kAddFsTitle;
 extern const char *kQuitTitle;
 extern const char *kHandedTitle;
 extern const char *kUpdateTitle;
+extern const char *kCastTitle;
 
 // 題名を作る（1 度だけ）／言語を替えたあとに取り直す。
 void InitTitles();

@@ -169,6 +169,23 @@ struct Settings {
 	bool updateCheck;
 	long long nextUpdateCheck;
 
+	// [Cast] MuteLocal。Chromecast へ送っている間、手元の音を消す（既定は ON。
+	// TV と数秒ずれて二重に聞こえるため。cast.h / memo/cast.md）。
+	bool castMuteLocal;
+	// [Cast] VideoAdvanceMs。送る映像の時刻をこれだけ早める（0..kCastAdvanceMsMax）。
+	// 鍵盤は「次に送る絵」で初めて出るので、音より少し遅れて見える（Android で
+	// 60f 換算 3f ほど）。見ながら合わせるための補正。
+	int castVideoAdvanceMs;
+	static const int kCastAdvanceMsMax = 200;
+	// 既定値。ユーザーが TV（REGZA の Cast 受信部）で見て合わせた値
+	// （2026-09-25）: パソコン 16ms、Android（Pixel 7a）48ms。Android は音声の
+	// コールバックが粗い（2048 フレーム）ぶん大きい。
+#ifdef __ANDROID__
+	static const int kCastAdvanceMsDefault = 48;
+#else
+	static const int kCastAdvanceMsDefault = 16;
+#endif
+
 	// [Tutorial] Done。初回起動のチュートリアルを見終えた（またはスキップ
 	// した）。無ければ次の起動で出す（tutorial.md）。
 	bool tutorialDone;
@@ -204,6 +221,7 @@ struct Settings {
 		kFieldUpdateCheck = 1 << 23,     // [Network] UpdateCheck
 		kFieldUpdateSchedule = 1 << 24,  // [Network] NextUpdateCheck
 		kFieldPip = 1 << 25,             // [Screen] Pip
+		kFieldCast = 1 << 26,            // [Cast] MuteLocal / VideoAdvanceMs
 	};
 
 	Settings();

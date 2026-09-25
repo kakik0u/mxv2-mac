@@ -172,6 +172,12 @@ public:
 		showHelp_ = true;
 	}
 
+	// [キャスト]ダイアログ (F9)。Chromecast へ送る（settingsui_cast.cpp）。
+	void OpenCast() {
+		if (busy()) return;
+		showCast_ = true;
+	}
+
 	// バージョン情報のダイアログ (F12 / A)。
 	void OpenAbout() {
 		if (busy()) return;
@@ -201,6 +207,7 @@ public:
 		// 設定ウィンドウより先に閉じる。
 		if (updateOpen_) { updateClose_ = true; return true; }
 		if (showAbout_) { showAbout_ = false; return true; }
+		if (showCast_) { showCast_ = false; return true; }
 		if (showHelp_) { showHelp_ = false; return true; }
 		// ファイルシステムの追加はその設定ダイアログの中に入れ子で開く。
 		if (addFsShow_) { addFsClose_ = true; return true; }
@@ -515,7 +522,7 @@ private:
 	// どれか 1 つでもダイアログが開いているか。モーダルなので、開いている
 	// 間は別のものを開けない（先にそれを閉じてもらう）。
 	bool busy() const {
-		return visible_ || showColors_ || showAbout_ || showFolder_ || showHelp_ ||
+		return visible_ || showColors_ || showAbout_ || showCast_ || showFolder_ || showHelp_ ||
 		       showFileSystems_ || showBookmarks_ || showPdxPaths_ || showStartup_;
 	}
 
@@ -813,6 +820,14 @@ private:
 	// バージョン情報 (F12)。settingsui_info.cpp。
 	void BuildAboutWindow();
 	bool showAbout_;
+
+	// Chromecast へ送る（settingsui_cast.cpp / cast.h）。[表示] の [キャスト…]。
+	void BuildCastWindow(Settings *settings);
+	bool showCast_;
+	bool castWasOpen_;     // 前のフレームで開いていた（開いた・閉じた瞬間を拾う）
+	int castSelected_;     // 一覧で選んでいる行
+	ImVec2 castLastSize_;  // 前のフレームのダイアログの大きさ（変わったら中央へ置き直す）
+	bool castRecenter_;    // 次のフレームで中央へ置き直す
 	// 中身をドラッグしてスクロール中。ダイアログはモーダルで一度に 1 つしか
 	// 開かないので、どのダイアログでもこの 1 つを使い回す。
 	bool dragScroll_;

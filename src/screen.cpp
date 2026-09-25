@@ -335,9 +335,12 @@ void Screen::Draw() {
 
 	if (scaleMode_ == kScaleSharp && EnsurePreTexture()) {
 		// 1 段目: 最近傍で整数倍へ（中間テクスチャいっぱいに描く）。
+		// 描画先は元へ戻す（NULL ＝窓とは限らない。Chromecast へ送っている間は
+		// 窓と同じ大きさのテクスチャへ描いている。cast.h）。
+		SDL_Texture *prevTarget = SDL_GetRenderTarget(renderer_);
 		SDL_SetRenderTarget(renderer_, preTexture_);
 		SDL_RenderCopy(renderer_, texture_, NULL, NULL);
-		SDL_SetRenderTarget(renderer_, NULL);
+		SDL_SetRenderTarget(renderer_, prevTarget);
 
 		// 2 段目: バイリニアで目的の大きさへ。
 		SDL_RenderCopy(renderer_, preTexture_, NULL, &dst);

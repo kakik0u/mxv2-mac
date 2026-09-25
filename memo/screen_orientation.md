@@ -138,3 +138,31 @@
 - `readme.md` … スキンの節（同梱スキンが 4 → 6 個に増えたぶんも）
 - `android.md` … 保留事項「画面の向きとスキン」の消化
 - **スキンエディタは無関係**（layout.ini のスキーマは変わらない）
+
+## 直した不具合: 回転で画面が壊れたまま戻らない（2026-09-25）
+
+**ダイアログを開いたまま縦横を素早く何度も替えると、画面が壊れたまま戻らなかった。**
+
+- 症状: Pixel 7a（Android 17）で、画面が上下逆・赤と青が入れ替わり・横と縦の古い絵が
+  混ざった状態で固まる（描画のループは動いている）。古いデバッグ版では真っ黒のまま。
+  回転のたびに UI スレッドで `E libEGL : eglMakeCurrentImpl:1100 error 3002
+  (EGL_BAD_ACCESS)` が 2 回出ていた。
+- 再現: `adb shell cmd window user-rotation lock 1` / `lock 0` を交互に 40 回ほど
+  （間隔 0.1〜0.9 秒）。ダイアログを開いておくとほぼ確実。終わったら
+  `cmd window user-rotation free` で戻す。キャストとは無関係（前からあった）。
+- **原因**: SDL2 の Android は、窓の大きさの変化を **Java の UI スレッドから** 配る
+  （SDLSurface.surfaceChanged → onNativeResize → Android_SendResize →
+  SDL_SendWindowEvent）。配る途中でレンダラーの event watch（SDL_render.c の
+  SDL_RendererEventWatch）が UI スレッドで走り、描画先を一度窓へ切り替えて戻し
+  （SDL_SetRenderTarget ×2 → GLES2_ActivateRenderer → eglMakeCurrent が
+  EGL_BAD_ACCESS。エラー 2 回の正体）、ビューポートの命令を積む。GL の実際の状態は
+  変わらないまま SDL の控え（描画先・命令の列）だけが描画スレッドと取り合いで
+  書き換わり、テクスチャ向けの上下反転や別のシェーダーのまま窓へ描いてしまう。
+- **対処**（src/main.cpp）: `SDL_SetEventFilter` で、描画スレッド以外から来た
+  SDL_WINDOWEVENT_RESIZED / SIZE_CHANGED を捨てて印だけ立て、描画スレッドの
+  フレームの頭（SDL_PollEvent の前）で SIZE_CHANGED を積み直す（`RepostResizeEvent`）。
+  積み直した知らせでは event watch が描画スレッドで走る。フィルターは Android だけ。
+- 確認: 直したあと、40 往復×2 回（普通のビルド）、40 往復×2 回（キャストの描き方を
+  0.5 秒ごとに入り切りさせる仮の試験フラグ入り）、横で止める 10 往復、どれも
+  EGL_BAD_ACCESS 0 回・画面正常。確かめ用の仮の仕組み（`MXV2_CAST_FRAMETEST` /
+  `SDLCast_TestForceRendererFrame`、TEMPTEST の印）は取り除いた。

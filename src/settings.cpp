@@ -79,6 +79,8 @@ Settings::Settings()
       windowMaximized(false),
       updateCheck(true),
       nextUpdateCheck(0),
+      castMuteLocal(true),
+      castVideoAdvanceMs(kCastAdvanceMsDefault),
       tutorialDone(false) {
 	// 初回起動のブックマーク（bookmark.md）。ini に [Bookmark] があれば
 	// Load() が置き換える。
@@ -194,6 +196,10 @@ bool Settings::Load(const std::string &path) {
 	windowMaximized = ini.GetInt("Position", "Maximized", windowMaximized ? 1 : 0) != 0;
 
 	updateCheck = ini.GetInt("Network", "UpdateCheck", updateCheck ? 1 : 0) != 0;
+	castMuteLocal = ini.GetInt("Cast", "MuteLocal", castMuteLocal ? 1 : 0) != 0;
+	castVideoAdvanceMs = ini.GetInt("Cast", "VideoAdvanceMs", castVideoAdvanceMs);
+	if (castVideoAdvanceMs < 0) castVideoAdvanceMs = 0;
+	if (castVideoAdvanceMs > kCastAdvanceMsMax) castVideoAdvanceMs = kCastAdvanceMsMax;
 	// 時刻は 32 ビットに収まらなくなる日が来るので、文字列で読み書きする。
 	{
 		const std::string v = ini.GetString("Network", "NextUpdateCheck", std::string());
@@ -303,6 +309,8 @@ bool Settings::Save(const std::string &path) const {
 	ini.SetInt("Position", "Maximized", windowMaximized ? 1 : 0);
 
 	ini.SetInt("Network", "UpdateCheck", updateCheck ? 1 : 0);
+	ini.SetInt("Cast", "MuteLocal", castMuteLocal ? 1 : 0);
+	ini.SetInt("Cast", "VideoAdvanceMs", castVideoAdvanceMs);
 	{
 		char buf[32];
 		snprintf(buf, sizeof(buf), "%lld", nextUpdateCheck);
@@ -361,6 +369,10 @@ bool Settings::SaveFields(const std::string &path, unsigned fields) const {
 	if (fields & kFieldTutorial) out.tutorialDone = tutorialDone;
 	if (fields & kFieldUpdateCheck) out.updateCheck = updateCheck;
 	if (fields & kFieldUpdateSchedule) out.nextUpdateCheck = nextUpdateCheck;
+	if (fields & kFieldCast) {
+		out.castMuteLocal = castMuteLocal;
+		out.castVideoAdvanceMs = castVideoAdvanceMs;
+	}
 	return out.Save(path);
 }
 

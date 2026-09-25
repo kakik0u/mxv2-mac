@@ -96,6 +96,11 @@ android {
 		externalNativeBuild {
 			cmake {
 				arguments '-DANDROID_STL=c++_static'
+				// 足したい CMake の引数（空白区切り）。gradle.properties か
+				// コマンドラインの -Pmxv2.cmakeArgs="-DMXV2_CAST=ON" で渡す。
+				if (project.hasProperty('mxv2.cmakeArgs')) {
+					project.property('mxv2.cmakeArgs').split(/\s+/).findAll { it }.each { arguments it }
+				}
 			}
 		}
 		ndk {
