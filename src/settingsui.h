@@ -275,6 +275,7 @@ public:
 		kRequestQuit,
 		kRequestOpenHanded,   // requestedHanded() を「落とされた」のと同じ扱いで開く
 		kRequestEnterPip,     // 小窓（ピクチャー・イン・ピクチャー）に入る
+		kRequestStopCast,     // [キャストを終了]。手元を一時停止してからキャストを終える
 	};
 	Request TakeRequest() {
 		const Request r = request_;

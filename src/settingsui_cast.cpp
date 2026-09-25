@@ -153,7 +153,8 @@ void SettingsUi::BuildCastWindow(Settings *settings) {
 		}
 	} else {
 		ImGui::BeginDisabled(state == cast::kStopping);
-		if (ImGui::Button(Msg("Cast.Stop"), ImVec2(-FLT_MIN, 0.0f))) cast::Stop();
+		// 終えるのはメインループ（先に手元を一時停止する。main.cpp の kRequestStopCast）。
+		if (ImGui::Button(Msg("Cast.Stop"), ImVec2(-FLT_MIN, 0.0f))) request_ = kRequestStopCast;
 		ImGui::EndDisabled();
 	}
 

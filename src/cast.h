@@ -91,11 +91,11 @@ std::string StatsText();
 // 送る品質（[キャスト品質]。Settings::castQuality の段）。大きさ・fps・映像の
 // ビットレートの組。次に送り始めるときから効く（送っている間は変えない）。
 enum Quality {
-	kQualityLowest = 0,  // 640x360・15fps・1Mbps
-	kQualityLow,         // 854x480・30fps・2Mbps（Android の既定）
-	kQualityMedium,      // 1280x720・30fps・2Mbps（パソコンの既定）
-	kQualityHigh,        // 1920x1080・30fps・4Mbps
-	kQualityHighest,     // 1920x1080・60fps・6Mbps
+	kQualityLowest = 0,  // 640x360・15fps・1Mbps、音声 128kbps
+	kQualityLow,         // 854x480・30fps・2Mbps、音声 128kbps（Android の既定）
+	kQualityMedium,      // 1280x720・30fps・2Mbps、音声 192kbps（パソコンの既定）
+	kQualityHigh,        // 1920x1080・30fps・4Mbps、音声 192kbps
+	kQualityHighest,     // 1920x1080・60fps・6Mbps、音声 192kbps
 	kQualityCount
 };
 struct QualityPreset {
@@ -103,6 +103,7 @@ struct QualityPreset {
 	int height;
 	int fps;
 	int videoKbps;
+	int audioKbps;
 };
 // q の中身（範囲外なら端の段）。MXV2_CAST が無くても使える（ダイアログの表示用）。
 const QualityPreset &GetQualityPreset(int q);

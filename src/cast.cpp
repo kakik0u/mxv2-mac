@@ -7,14 +7,15 @@ namespace cast {
 
 // 送る品質の段（2026-09-26、ユーザーの指定）。CPU は画素数 × fps にほぼ比例する
 // （Pixel 7a で 854x480・30fps が 0.41G サイクル/秒。memo/cast.md の手順 4）。
-// 映像のビットレートは画質だけに効き、CPU はほぼ変わらない。
+// 映像のビットレートは画質だけに効き、CPU はほぼ変わらない。音声は「中」以上を
+// 192kbps にする（2026-09-26、ユーザーの指定）。
 const QualityPreset &GetQualityPreset(int q) {
 	static const QualityPreset kPresets[kQualityCount] = {
-	    {640, 360, 15, 1000},    // 最低
-	    {854, 480, 30, 2000},    // 低（Android の既定）
-	    {1280, 720, 30, 2000},   // 中（パソコンの既定）
-	    {1920, 1080, 30, 4000},  // 高
-	    {1920, 1080, 60, 6000},  // 最高
+	    {640, 360, 15, 1000, 128},    // 最低
+	    {854, 480, 30, 2000, 128},    // 低（Android の既定）
+	    {1280, 720, 30, 2000, 192},   // 中（パソコンの既定）
+	    {1920, 1080, 30, 4000, 192},  // 高
+	    {1920, 1080, 60, 6000, 192},  // 最高
 	};
 	if (q < 0) q = 0;
 	if (q >= kQualityCount) q = kQualityCount - 1;
@@ -212,14 +213,15 @@ void StartSequence(Device d) {
 		cfg.height = qp.height;
 		cfg.fps = qp.fps;
 		cfg.videoKbps = qp.videoKbps;
+		cfg.audioKbps = qp.audioKbps;
 		cfg.title = MXV2_APP_NAME;
 		if (SDLCastG_StartStream(&cfg) == 0) {
 			g.streaming = true;
 			g.state = kStarting;
 			g.streamStartTicks = SDL_GetTicks();
 			g.fetched = false;
-			printf("cast     : %s (%s) %dx%d %dfps %dkbps\n", d.name.c_str(), d.address.c_str(),
-			       cfg.width, cfg.height, cfg.fps, cfg.videoKbps);
+			printf("cast     : %s (%s) %dx%d %dfps video %dkbps audio %dkbps\n", d.name.c_str(),
+			       d.address.c_str(), cfg.width, cfg.height, cfg.fps, cfg.videoKbps, cfg.audioKbps);
 			printf("cast     : connect %u ms, receiver status %u ms, stream start %u ms\n",
 			       (unsigned)(t1 - t0), (unsigned)(t2 - t1), (unsigned)(SDL_GetTicks() - t2));
 		} else {

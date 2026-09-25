@@ -1469,6 +1469,14 @@ int main(int argc, char **argv) {
 			case mxv2::SettingsUi::kRequestEnterPip:
 				mxv2::pip::Enter();
 				break;
+			// [キャストを終了]。受信側で終わったとき（PollCast）と同じく、手元を
+			// 一時停止してから終える（2026-09-26、ユーザーの指示）。先に止めるのは、
+			// 後始末で手元の消音が外れて、その場で鳴り出さないようにするため。
+			case mxv2::SettingsUi::kRequestStopCast:
+				pausedByFocus = false;
+				if (player.playing() && !player.paused()) player.Pause();
+				mxv2::cast::Stop();
+				break;
 			default:
 				break;
 		}
