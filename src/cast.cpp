@@ -2,6 +2,28 @@
 
 #include "cast.h"
 
+namespace mxv2 {
+namespace cast {
+
+// 送る品質の段（2026-09-26、ユーザーの指定）。CPU は画素数 × fps にほぼ比例する
+// （Pixel 7a で 854x480・30fps が 0.41G サイクル/秒。memo/cast.md の手順 4）。
+// 映像のビットレートは画質だけに効き、CPU はほぼ変わらない。
+const QualityPreset &GetQualityPreset(int q) {
+	static const QualityPreset kPresets[kQualityCount] = {
+	    {640, 360, 15, 1000},    // 最低
+	    {854, 480, 30, 2000},    // 低（Android の既定）
+	    {1280, 720, 30, 2000},   // 中（パソコンの既定）
+	    {1920, 1080, 30, 4000},  // 高
+	    {1920, 1080, 60, 6000},  // 最高
+	};
+	if (q < 0) q = 0;
+	if (q >= kQualityCount) q = kQualityCount - 1;
+	return kPresets[q];
+}
+
+}  // namespace cast
+}  // namespace mxv2
+
 #ifndef MXV2_CAST
 
 namespace mxv2 {
@@ -23,6 +45,7 @@ std::string DeviceName() { return std::string(); }
 std::string LastError() { return std::string(); }
 std::string LastErrorKey() { return std::string(); }
 std::string StatsText() { return std::string(); }
+void SetQuality(int) {}
 void SetMuteLocal(bool) {}
 void SetVideoAdvanceMs(int) {}
 void AudioTap(int16_t *, int, int, uint64_t) {}
@@ -44,25 +67,12 @@ void ResetRendererTextures() {}
 
 #include "appprofile.h"  // CMake が Profile.ini から生成する
 #include "sdlcastg_sdl.h"
-#include "screen.h"
 
 namespace mxv2 {
 namespace cast {
 
 namespace {
 
-// 送る大きさ。Android は 854x480（Xperia Ace III の小さいコアだけでも 30fps に
-// 間に合う。720p は間に合わずフレームを捨てた。memo/cast.md の手順 4）。
-// パソコンは 1280x720。どちらも 30fps。
-void StreamSize(int *w, int *h) {
-	if (Screen::IsMobile()) {
-		*w = 854;
-		*h = 480;
-	} else {
-		*w = 1280;
-		*h = 720;
-	}
-}
 
 // 受信側の返事を待つ長さ（つないでから、アプリの状態が分かるまで）。
 const int kConnectWaitMs = 10000;
@@ -84,6 +94,7 @@ struct Global {
 	std::atomic<bool> streaming;  // 音と絵を渡してよい
 	std::atomic<bool> muteLocal;
 	std::atomic<int> advanceMs;  // 映像の時刻を早める量
+	std::atomic<int> quality;    // 送る品質（Quality。送り始めるときに読む）
 	std::atomic<bool> cancel;  // つないでいる途中でやめる
 	bool endReported;          // 受信側が終わったのを Poll で知らせた（Stop 待ち）
 	bool remotePaused;         // 受信側で一時停止されている（再開を待つ）
@@ -109,16 +120,18 @@ struct Global {
 	int perfCaptures;          // 読み出して渡した回数
 	double perfReadSec;        // 読み出しにかかった時間の合計
 	double perfReadMax;
+	uint64_t perfVideoFrames;  // 数え始めのときの、エンコードした絵の数（sdlcastg の統計）
+	uint64_t perfSameFrames;   // 同じく、同じ枠で捨てた絵の数
 	uint64_t lastCapturedFrame;  // 最後に読み出した絵の visualFrame
 	bool haveCaptured;
 
 	Global()
 	    : initialized(false), discovering(false), workerBusy(false), state(kIdle),
-	      streaming(false), muteLocal(true), advanceMs(0), cancel(false), endReported(false),
+	      streaming(false), muteLocal(true), advanceMs(0), quality(kQualityMedium), cancel(false), endReported(false),
 	      remotePaused(false), reloading(false), recoverStreak(0), bufferingSince(0),
 	      seekRescued(false), streamStartTicks(0), fetched(false), mapFrame(0), mapStreamMs(0),
 	      mapTicks(0), perfStart(0), perfLoops(0), perfCaptures(0), perfReadSec(0),
-	      perfReadMax(0), lastCapturedFrame(0), haveCaptured(false) {}
+	      perfReadMax(0), perfVideoFrames(0), perfSameFrames(0), lastCapturedFrame(0), haveCaptured(false) {}
 };
 
 Global &G() {
@@ -194,15 +207,19 @@ void StartSequence(Device d) {
 	if (ok && !g.cancel) {
 		SDLCastG_StreamConfig cfg;
 		SDLCastG_DefaultStreamConfig(&cfg);
-		StreamSize(&cfg.width, &cfg.height);
+		const QualityPreset &qp = GetQualityPreset(g.quality);
+		cfg.width = qp.width;
+		cfg.height = qp.height;
+		cfg.fps = qp.fps;
+		cfg.videoKbps = qp.videoKbps;
 		cfg.title = MXV2_APP_NAME;
 		if (SDLCastG_StartStream(&cfg) == 0) {
 			g.streaming = true;
 			g.state = kStarting;
 			g.streamStartTicks = SDL_GetTicks();
 			g.fetched = false;
-			printf("cast     : %s (%s) %dx%d\n", d.name.c_str(), d.address.c_str(), cfg.width,
-			       cfg.height);
+			printf("cast     : %s (%s) %dx%d %dfps %dkbps\n", d.name.c_str(), d.address.c_str(),
+			       cfg.width, cfg.height, cfg.fps, cfg.videoKbps);
 			printf("cast     : connect %u ms, receiver status %u ms, stream start %u ms\n",
 			       (unsigned)(t1 - t0), (unsigned)(t2 - t1), (unsigned)(SDL_GetTicks() - t2));
 		} else {
@@ -510,6 +527,12 @@ std::string StatsText() {
 	return buf;
 }
 
+void SetQuality(int q) {
+	if (q < 0) q = 0;
+	if (q >= kQualityCount) q = kQualityCount - 1;
+	G().quality = q;
+}
+
 void SetMuteLocal(bool mute) { G().muteLocal = mute; }
 
 void SetVideoAdvanceMs(int ms) { G().advanceMs = (ms < 0) ? 0 : ms; }
@@ -557,10 +580,21 @@ void EndFrame(SDL_Renderer *renderer, const SDL_Rect &rect, uint64_t visualFrame
 	g.perfLoops++;
 	const double span = (double)(now - g.perfStart) / (double)freq;
 	if (span >= 5.0) {
-		printf("cast     : draw %.1f fps, capture %.1f fps, read %.1f ms (max %.1f) %dx%d\n",
+		// encode … エンコードした絵（TV へ出る絵）、same … 同じ枠で捨てた絵（5 秒の間）。
+		SDLCastG_StreamStats ss;
+		SDLCastG_GetStreamStats(&ss);
+		// 送り直すと統計は 0 から数え直すので、前の控えより小さければ 0 から。
+		if (ss.videoFrames < g.perfVideoFrames) g.perfVideoFrames = 0;
+		if (ss.sameTimeFrames < g.perfSameFrames) g.perfSameFrames = 0;
+		printf("cast     : draw %.1f fps, capture %.1f fps, encode %.1f fps, same %llu, "
+		       "read %.1f ms (max %.1f) %dx%d\n",
 		       g.perfLoops / span, g.perfCaptures / span,
+		       (double)(ss.videoFrames - g.perfVideoFrames) / span,
+		       (unsigned long long)(ss.sameTimeFrames - g.perfSameFrames),
 		       g.perfCaptures ? g.perfReadSec * 1000.0 / g.perfCaptures : 0.0,
 		       g.perfReadMax * 1000.0, rect.w, rect.h);
+		g.perfVideoFrames = ss.videoFrames;
+		g.perfSameFrames = ss.sameTimeFrames;
 		g.perfStart = now;
 		g.perfLoops = 0;
 		g.perfCaptures = 0;

@@ -79,6 +79,7 @@ Settings::Settings()
       windowMaximized(false),
       updateCheck(true),
       nextUpdateCheck(0),
+      castQuality(kCastQualityDefault),
       castMuteLocal(true),
       castVideoAdvanceMs(kCastAdvanceMsDefault),
       tutorialDone(false) {
@@ -196,6 +197,9 @@ bool Settings::Load(const std::string &path) {
 	windowMaximized = ini.GetInt("Position", "Maximized", windowMaximized ? 1 : 0) != 0;
 
 	updateCheck = ini.GetInt("Network", "UpdateCheck", updateCheck ? 1 : 0) != 0;
+	castQuality = ini.GetInt("Cast", "Quality", castQuality);
+	if (castQuality < 0) castQuality = 0;
+	if (castQuality > kCastQualityMax) castQuality = kCastQualityMax;
 	castMuteLocal = ini.GetInt("Cast", "MuteLocal", castMuteLocal ? 1 : 0) != 0;
 	castVideoAdvanceMs = ini.GetInt("Cast", "VideoAdvanceMs", castVideoAdvanceMs);
 	if (castVideoAdvanceMs < 0) castVideoAdvanceMs = 0;
@@ -309,6 +313,7 @@ bool Settings::Save(const std::string &path) const {
 	ini.SetInt("Position", "Maximized", windowMaximized ? 1 : 0);
 
 	ini.SetInt("Network", "UpdateCheck", updateCheck ? 1 : 0);
+	ini.SetInt("Cast", "Quality", castQuality);
 	ini.SetInt("Cast", "MuteLocal", castMuteLocal ? 1 : 0);
 	ini.SetInt("Cast", "VideoAdvanceMs", castVideoAdvanceMs);
 	{
@@ -370,6 +375,7 @@ bool Settings::SaveFields(const std::string &path, unsigned fields) const {
 	if (fields & kFieldUpdateCheck) out.updateCheck = updateCheck;
 	if (fields & kFieldUpdateSchedule) out.nextUpdateCheck = nextUpdateCheck;
 	if (fields & kFieldCast) {
+		out.castQuality = castQuality;
 		out.castMuteLocal = castMuteLocal;
 		out.castVideoAdvanceMs = castVideoAdvanceMs;
 	}

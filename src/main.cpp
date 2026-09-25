@@ -713,6 +713,7 @@ int main(int argc, char **argv) {
 	// 開く前に付ける。
 	player.SetAudioTap(&mxv2::cast::AudioTap);
 	mxv2::cast::Init();
+	mxv2::cast::SetQuality(settings.castQuality);
 	mxv2::cast::SetMuteLocal(settings.castMuteLocal);
 	mxv2::cast::SetVideoAdvanceMs(settings.castVideoAdvanceMs);
 	// 出力レートを変えるときに開き直すので、Config はループの外に置く。

@@ -169,6 +169,16 @@ struct Settings {
 	bool updateCheck;
 	long long nextUpdateCheck;
 
+	// [Cast] Quality。送る品質の段（cast::Quality。0 最低 … 4 最高）。既定は
+	// Android が 1（低: 854x480・30fps）、パソコンが 2（中: 1280x720・30fps）。
+	int castQuality;
+#ifdef __ANDROID__
+	static const int kCastQualityDefault = 1;
+#else
+	static const int kCastQualityDefault = 2;
+#endif
+	static const int kCastQualityMax = 4;
+
 	// [Cast] MuteLocal。Chromecast へ送っている間、手元の音を消す（既定は ON。
 	// TV と数秒ずれて二重に聞こえるため。cast.h / memo/cast.md）。
 	bool castMuteLocal;
@@ -221,7 +231,7 @@ struct Settings {
 		kFieldUpdateCheck = 1 << 23,     // [Network] UpdateCheck
 		kFieldUpdateSchedule = 1 << 24,  // [Network] NextUpdateCheck
 		kFieldPip = 1 << 25,             // [Screen] Pip
-		kFieldCast = 1 << 26,            // [Cast] MuteLocal / VideoAdvanceMs
+		kFieldCast = 1 << 26,            // [Cast] Quality / MuteLocal / VideoAdvanceMs
 	};
 
 	Settings();

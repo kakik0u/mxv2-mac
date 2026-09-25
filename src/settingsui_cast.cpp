@@ -6,7 +6,8 @@
 //   [送る] / [キャストを終了]（同じ場所の 1 つのボタン）
 //   状態（高さ固定。説明か前回の終わりかた、または送り先と状態）
 //   ── 1 列で画面に収まらないとき（横画面など）はここから右の列 ──
-//   [送っている間は手元の音を消す]、[映像を早める] と注記（mxv2.ini の [Cast]）、
+//   [キャスト品質]（送っている間は触れない）、[送っている間は手元の音を消す]、
+//   [映像を早める] と注記（mxv2.ini の [Cast]）、
 //   流れの様子（英語）、[閉じる]
 // 探すのはこのダイアログを開いている間だけ。
 
@@ -25,6 +26,16 @@
 namespace mxv2 {
 
 using namespace settingsui;
+
+namespace {
+
+// 品質の段の見出し（「低  854x480 30fps 2Mbps」の形）。
+void QualityLabel(const char *name, const cast::QualityPreset &p, char *out, size_t size) {
+	snprintf(out, size, "%s  %dx%d %dfps %gMbps", name, p.width, p.height, p.fps,
+	         p.videoKbps / 1000.0);
+}
+
+}  // namespace
 
 void SettingsUi::BuildCastWindow(Settings *settings) {
 	if (!cast::Available()) {
@@ -60,12 +71,12 @@ void SettingsUi::BuildCastWindow(Settings *settings) {
 	const ImGuiStyle &st = ImGui::GetStyle();
 	// 1 列では画面の高さに収まらないとき（Android の横画面など）は 2 列にする:
 	// 左 … 一覧と状態、右 … ボタンと調整項目（2026-09-25、ユーザーの指摘）。
-	// 1 列の高さの見積もり: 字の行が 13（説明 1・一覧 4・状態 3・名札 1・注記 1・
-	// 流れの様子 1・折り返しの余裕 2）、部品の行が 4（ボタン・チェック・スライダー・
-	// [閉じる]）、
+	// 1 列の高さの見積もり: 字の行が 14（説明 1・一覧 4・状態 3・名札 2・注記 1・
+	// 流れの様子 1・折り返しの余裕 2）、部品の行が 5（ボタン・品質・チェック・
+	// スライダー・[閉じる]）、
 	// 題名の帯、余白（窓の上下と一覧の枠の上下）。
-	const float oneColumnH = ImGui::GetTextLineHeightWithSpacing() * 13.0f +
-	                         ImGui::GetFrameHeightWithSpacing() * 5.0f +
+	const float oneColumnH = ImGui::GetTextLineHeightWithSpacing() * 14.0f +
+	                         ImGui::GetFrameHeightWithSpacing() * 6.0f +
 	                         st.WindowPadding.y * 4.0f + st.ItemSpacing.y * 2.0f;
 	const bool wide = io.DisplaySize.x > io.DisplaySize.y &&
 	                  oneColumnH > io.DisplaySize.y - st.DisplaySafeAreaPadding.y * 2.0f;
@@ -101,7 +112,7 @@ void SettingsUi::BuildCastWindow(Settings *settings) {
 	// 並び（2026-09-25、ユーザーの指示）:
 	//   説明 / 一覧 / [送る]・[キャストを終了] / 状態
 	//   （2 列のときはここで右の列へ）
-	//   [手元の音を消す] / [映像を早める] と注記 / 流れの様子 / [閉じる]
+	//   [キャスト品質] / [手元の音を消す] / [映像を早める] と注記 / 流れの様子 / [閉じる]
 	ConfirmText(Msg("Cast.Choose"));
 	int startIndex = -1;
 	{
@@ -136,6 +147,7 @@ void SettingsUi::BuildCastWindow(Settings *settings) {
 		if (ImGui::Button(Msg("Cast.Start"), ImVec2(-FLT_MIN, 0.0f))) startIndex = castSelected_;
 		ImGui::EndDisabled();
 		if (startIndex >= 0 && startIndex < (int)devices.size()) {
+			cast::SetQuality(settings->castQuality);
 			cast::SetMuteLocal(settings->castMuteLocal);
 			cast::Start(devices[startIndex]);
 		}
@@ -183,6 +195,38 @@ void SettingsUi::BuildCastWindow(Settings *settings) {
 	}
 
 	if (twoColumns) ImGui::TableNextColumn();
+
+	// 送る品質（大きさ・fps・映像のビットレート）。送り始めるときに決まるので、
+	// 送っている間は触れない（一覧と同じ）。名札は上の行、選ぶ欄は幅いっぱい
+	// （[映像を早める] と同じ。幅の狭い画面ではみ出さないように）。
+	{
+		static const char *const kKeys[cast::kQualityCount] = {
+		    "Cast.QualityLowest", "Cast.QualityLow", "Cast.QualityMedium", "Cast.QualityHigh",
+		    "Cast.QualityHighest",
+		};
+		int q = settings->castQuality;
+		if (q < 0 || q >= cast::kQualityCount) q = Settings::kCastQualityDefault;
+		char shown[128];
+		ImGui::TextUnformatted(Msg("Cast.Quality"));
+		ImGui::SetNextItemWidth(-FLT_MIN);
+		ImGui::BeginDisabled(!idle);
+		QualityLabel(Msg(kKeys[q]), cast::GetQualityPreset(q), shown, sizeof(shown));
+		if (ImGui::BeginCombo("##castquality", shown)) {
+			for (int i = 0; i < cast::kQualityCount; i++) {
+				const bool selected = (i == q);
+				char label[128];
+				QualityLabel(Msg(kKeys[i]), cast::GetQualityPreset(i), label, sizeof(label));
+				if (ImGui::Selectable(label, selected)) {
+					settings->castQuality = i;
+					changedFields_ |= Settings::kFieldCast;
+					cast::SetQuality(i);
+				}
+				if (selected) ImGui::SetItemDefaultFocus();
+			}
+			ImGui::EndCombo();
+		}
+		ImGui::EndDisabled();
+	}
 
 	bool mute = settings->castMuteLocal;
 	if (ImGui::Checkbox(Msg("Cast.MuteLocal"), &mute)) {
