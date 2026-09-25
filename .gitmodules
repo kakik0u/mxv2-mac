@@ -1,0 +1,3 @@
+[submodule "sdlcastg"]
+	path = sdlcastg
+	url = https://github.com/gorry/sdlcastg.git
