@@ -373,8 +373,9 @@ endif()
 
 # ---------------------------------------------------------------------------
 # Chromecast への送信（memo/cast.md。メニューの [表示] → [キャスト…]）
-#   sdlcastg/（別に公開しているライブラリの写し）を取り込む。mbedTLS と、vcpkg で作る
-#   libvpx / opus / libyuv が要る（BUILD.md）。置き場所は mxv2 の third_party/ を渡す。
+#   sdlcastg/（git の submodule。https://github.com/gorry/sdlcastg）を取り込む。mbedTLS と、
+#   vcpkg で作る libvpx / opus / libyuv が要る（BUILD.md）。置き場所は mxv2 の third_party/ を渡す。
+#   submodule を取ってこずに clone した（sdlcastg/ が空の）ときは、AUTO なら組み込まない。
 #   MXV2_CAST は AUTO（既定。それらが置いてあれば組み込む）/ ON / OFF。
 #   組み込まないときはメニューに出ない（src/cast.cpp が空の実装になる）。
 # ---------------------------------------------------------------------------
@@ -392,12 +393,17 @@ if(MXV2_CAST STREQUAL "AUTO")
 	else()
 		set(_mxv2_cast_triplet "none")
 	endif()
-	if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mbedtls-3.6.7/CMakeLists.txt" AND
+	if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/sdlcastg/CMakeLists.txt" AND
+	   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mbedtls-3.6.7/CMakeLists.txt" AND
 	   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vcpkg_installed/${_mxv2_cast_triplet}/include/vpx")
 		set(_mxv2_cast ON)
 	endif()
 elseif(MXV2_CAST)
 	set(_mxv2_cast ON)
+endif()
+if(_mxv2_cast AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/sdlcastg/CMakeLists.txt")
+	message(FATAL_ERROR "mxv2: sdlcastg/ が空です。submodule を取ってきてください"
+	        "（git submodule update --init、TortoiseGit なら Submodule Update。BUILD.md）")
 endif()
 if(_mxv2_cast)
 	message(STATUS "mxv2: Chromecast への送信を組み込む（sdlcastg）")

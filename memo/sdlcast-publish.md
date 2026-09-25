@@ -240,3 +240,34 @@ sdlcastg を public にしてから mxv2 を push するのが順当。
   （mxv2 は公開リポジトリで memo/ も公開される）。
 
 - 2026-09-26: gorry/sdlcastg を public にした（ユーザー）。資格情報なしで取得でき、GitHub の判定も Apache-2.0、Profile.ini の Notice の URL も開ける。
+
+### 2026-09-26: 本家との同期のしかた（subtree のコマンドは使わない）
+
+ユーザーは TortoiseGit を使っていて、コマンドでの git は困る。そこで:
+
+1. sdlcastg の変更は mxv2/sdlcastg/ で直して試す（mxv2 のコミットに入ってよい）。
+2. 区切りで Claude が、変わったファイルを本家のクローン H:/proj/sdlcastg/sdlcastg へ写す
+   （写す前にクローンに変更が無いこと、写したあと両者が build/・third_party/・*.bak 以外同じことを diff で確かめる）。
+3. ユーザーが TortoiseGit でクローンをコミットして push する（ライブラリ向けの英語のメッセージ）。
+
+mxv2 の中の sdlcastg/ は本家の写しとして持つ扱い。subtree の控え（git-subtree-split）は
+古いままになるが、subtree のコマンドを使わないので困らない。
+最初の同期: c2b82a1（キャスト品質の追加）に入った受け取りの判定の修正（encoder.cpp / .h）。
+
+### 2026-09-26: submodule に切り替える（ユーザーの決定）
+
+上の「写す」やり方は手間と取り違えの元なので、**mxv2/sdlcastg/ を git の submodule にする**。
+TortoiseGit で扱える（Submodule Add / Update、sdlcastg/ で右クリックしてそのリポジトリとして
+コミット・push）。直すときは sdlcastg/ で main に切り替えてから（submodule は枝から外れた
+状態で取り出されることがある）→ sdlcastg でコミット・push → mxv2 で「sdlcastg を進めた」を
+コミット、の 2 段。
+
+切り替えの手順（ユーザーが TortoiseGit で）:
+1. H:/proj/sdlcastg/sdlcastg にある受け取りの判定の修正（encoder.cpp / .h）をコミット・push。
+2. mxv2 で sdlcastg/ を消してコミット。
+3. mxv2 で Submodule Add（Repository `https://github.com/gorry/sdlcastg.git`、Path `sdlcastg`）、コミット。
+4. H:/proj/sdlcastg/sdlcastg は不要。
+
+mxv2 側で合わせたこと: BUILD.md に clone のとき submodule も取る旨（--recursive / TortoiseGit の
+Recursive、あとからなら Submodule Update）。CMake は、sdlcastg/ が空なら AUTO では組み込まず、
+ON なら「submodule を取ってきて」と止める。

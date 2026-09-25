@@ -3,6 +3,13 @@
 `third_party/` はリポジトリに含めていない。クローンしたあと、このドキュメントに
 従って自分で用意する必要がある。
 
+`sdlcastg/`（Chromecast へ送るライブラリ。<https://github.com/gorry/sdlcastg>）は
+**git の submodule**。クローンするときは submodule も取ってくる
+（`git clone --recursive`。TortoiseGit なら Clone の画面で「Recursive」にチェック）。
+取らずにクローンしたときは、あとから `git submodule update --init`（TortoiseGit なら
+右クリック → TortoiseGit → Submodule Update）。取っていなくても、キャストの機能が
+外れるだけでビルドはできる（下の `MXV2_CAST`）。
+
 ## 1. 必要なもの
 
 | | 版 | 備考 |
@@ -111,7 +118,7 @@ mxv2 はそちらを使わない。
 
 ### mbedTLS 3.6.7（sdlcastg のときだけ）
 
-Chromecast へ送るライブラリ `sdlcastg/`（<https://github.com/gorry/sdlcastg> の写し）が、受信側との
+Chromecast へ送るライブラリ `sdlcastg/`（submodule。<https://github.com/gorry/sdlcastg>）が、受信側との
 TLS に使う。mxv2 の [キャスト…]（Chromecast へ送る）に要る。無ければその機能を
 抜いてビルドする（下の `MXV2_CAST`）。
 
@@ -175,7 +182,7 @@ build/sdlcastg-win64/Release/castplay.exe --list
 ```
 
 mxv2 に組み込むかは CMake の `MXV2_CAST`（`AUTO` / `ON` / `OFF`）。既定の `AUTO` は、
-mbedTLS と、そのプラットフォームの vcpkg の成果物が置いてあれば組み込む
+submodule の `sdlcastg/`、mbedTLS、そのプラットフォームの vcpkg の成果物がそろっていれば組み込む
 （configure のログに `mxv2: Chromecast への送信を組み込む` と出る）。組み込まないと
 メニューの [キャスト…] が出ないだけで、ほかは変わらない。
 Android で CMake に引数を足すときは Gradle に `-Pmxv2.cmakeArgs="-DMXV2_CAST=OFF"`
