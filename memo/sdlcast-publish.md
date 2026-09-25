@@ -227,3 +227,16 @@ sdlcastg を public にしてから mxv2 を push するのが順当。
 - 手元の写し: `H:/proj/sdlcastg/sdlcastg`（作業用のクローン）、`H:/proj/mxv2/sdlcastg_`
   （最初に push した置き場。同じコミット）、`H:/proj/mxv2/sdlcastg.begore-subtree`
   （mxv2 から退けたもの）。中身は改行と *.bak 以外同じ。
+
+### 2026-09-26: 公開の手順 4・5 が済んだ
+
+- gorry/sdlcastg: 既定の枝 main（97db7a9 "Keep LF line endings on every OS"）、master は削除済み、
+  タグ 2026.0925.1 は ff29418（最初のコミット）のまま。まだ private。
+- mxv2: 88f557d（キャスト対応）→ b99de32（subtree の squash、97db7a9 から）→ 1363612（merge）。
+  origin より 5 つ先で、まだ push していない（sdlcastg を public にしてから）。
+- subtree 後のビルド: Windows（win64-cast）と Android のリリース版が通った。作業ツリーは LF。
+- 気づいた点: 88f557d に空のファイル `C` が入った。memo/cast.md・memo/cast_spike/casttest.py・
+  この文書には、家の LAN の IP（192.168.2.x）・機器名（mytv など）・TV の型番が残っている
+  （mxv2 は公開リポジトリで memo/ も公開される）。
+
+- 2026-09-26: gorry/sdlcastg を public にした（ユーザー）。資格情報なしで取得でき、GitHub の判定も Apache-2.0、Profile.ini の Notice の URL も開ける。
