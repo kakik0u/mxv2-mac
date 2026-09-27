@@ -126,7 +126,7 @@ BT525 FM は車用の FM トランスミッター（A2DP / HFP / AVRCP）。Wind
 - `playctl.cpp` の `PollOutputLatency`（前面・背面の両ループ）: 演奏中・自動・キャストしていない
   ときだけ測る。5ms 以上変わったら反映、20ms 以上でログ（`Log.AudioOutputLatency`）。
   **キャスト中は足さない**（TV へ送る絵が音より遅れて届き捨てられるため）。
-- 設定ウィンドウ: 「うち出力先の遅れ {0} ms（測った値。Bluetooth など）」、キャスト中はその旨。
+- 設定ウィンドウ: 「うち出力先の遅れ {0} ms（測った値。Bluetooth など）」。
 
 確認:
 - Pixel 7a + BT525: 測った値 349ms → 表示の遅らせ 391.7ms。ユーザーが「問題ない」と確認。
@@ -184,3 +184,18 @@ TX-NR676E（Onkyo）は PC からはつながらなかったが、**Pixel 7a か
 adb（`cmd media_session dispatch`）で確認: 演奏前の play で始まる / ff・rew で ±10 秒 /
 stop で STOPPED、セッションはメディアボタンの受け手のまま / stop 後の play で再開 /
 **stop → ホーム → 40 秒後の play でも始まる**。
+- アーティスト欄の表示を TX-NR676E の TV 出力でユーザーが確認（2026-09-27）。
+
+### Windows + BT525 の遅れ（2026-09-27）
+
+- WASAPI の測定値は BT525 を既定の出力にしても **42ms**（有線 53ms とほぼ同じ）。**Windows は
+  Bluetooth の遅れを報告しない**。目視の遅れ（約 120〜130ms）には届かない。
+- 対処: 出力先の endpoint の親デバイスノード（cfgmgr32）が `BTH…`（BTHENUM / BTHHFENUM / BTHLE…）
+  なら Bluetooth とみなし、設定 `[Play] BluetoothLatency`（既定 80ms、0〜500）を足す。
+  Android は測れるので足さない（`outputlatency::MeasuresBluetooth()`）。設定ウィンドウでは
+  Windows だけスライダーを出す。
+- BT525 で: 42 + 80 = 122ms → 表示の遅らせ 132.7ms（48kHz）。目視の確認はこれから。
+- 目視で遅れ OK（既定 80ms のまま、ユーザー確認）。文言は「Bluetooth 遅延量」（はみ出したため、ユーザー指示）。
+- 設定欄の出力先の遅れは、Windows で Bluetooth のとき「出力先の遅れ 122 ms（計測値 42 ms ＋ 80 ms）」（Settings.LatencyOutputBluetooth。ユーザーの文言）。
+- 設定欄の行は自動の入り切り・出力先で出し消ししない（使わないスライダーは淡色、注記は空行で高さを保つ。ユーザーの指示）。
+  → ユーザーが画面で確認（2026-09-27）。

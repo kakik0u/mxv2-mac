@@ -509,7 +509,10 @@ void PollUnderruns(const mxv2::Player &player, uint32_t *last, uint32_t *nextMs)
 // Chromecast へ送っている間は足さない。TV へ送る絵の時刻は visualFrame から
 // 出しているので、手元の出力先の遅れを足すと絵が音より遅れて届き、
 // 書き出しで捨てられる（memo/bluetooth.md の 3。手元の音はふつう消している）。
-void PollOutputLatency(mxv2::Player *player, int *lastLoggedMs) {
+//
+// Windows は Bluetooth のぶんを測れないので、出力先が Bluetooth のときは
+// 設定の値 (bluetoothLatencyMs) を足す。
+void PollOutputLatency(mxv2::Player *player, const mxv2::Settings &settings, int *lastLoggedMs) {
 	const bool casting = mxv2::cast::GetState() != mxv2::cast::kIdle;
 	const bool want =
 	    player->playing() && !player->paused() && player->displayLatencyAuto() && !casting;
@@ -518,6 +521,10 @@ void PollOutputLatency(mxv2::Player *player, int *lastLoggedMs) {
 	int ms = mxv2::outputlatency::LatencyMs();
 	if (casting || !player->displayLatencyAuto()) ms = 0;
 	if (ms < 0) return;  // まだ測れていない。前の値のまま
+	if (ms > 0 && mxv2::outputlatency::OutputIsBluetooth() &&
+	    !mxv2::outputlatency::MeasuresBluetooth()) {
+		ms += settings.bluetoothLatencyMs;
+	}
 	// 測るたびに 1ms 前後揺れるので、5ms 以上変わったときだけ替える
 	// （替えるたびに表示が飛ぶ）。
 	const int rate = player->sampleRate();

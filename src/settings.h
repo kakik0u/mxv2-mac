@@ -111,6 +111,12 @@ struct Settings {
 	// 手動指定できる幅。設定ウィンドウのスライダもこの範囲。
 	static const int kLatencyMsMin = -200;
 	static const int kLatencyMsMax = 500;
+	// 自動のとき、出力先が Bluetooth なら足す遅れ (ms)。OS が Bluetooth の
+	// 遅れを教えてくれない環境（Windows）だけで使う。Android は測れる
+	// （outputlatency.h）。既定は BT525 FM で目で合わせた値から
+	// （memo/bluetooth.md）。
+	int bluetoothLatencyMs;
+	static const int kBluetoothLatencyMsMax = 500;
 
 	// [Path]
 	// PDX の探索先。MDX と同じフォルダで見つからなかったときに、この並び順で

@@ -30,6 +30,14 @@ void SetActive(bool active, int sampleRate);
 // 最後に測った遅れ（ミリ秒）。まだ測れていなければ -1。
 int LatencyMs();
 
+// 測った値に Bluetooth のぶんが入っているか。Android は入る（AAudio の時刻は
+// 受け側の遅れまで含む）。**Windows は入らない**（WASAPI は BT525 FM でも
+// 有線とほぼ同じ 42ms を返した。実際は 120ms 余り。memo/bluetooth.md）。
+bool MeasuresBluetooth();
+
+// いま測っている出力先が Bluetooth か（Windows だけ。ほかは常に false）。
+bool OutputIsBluetooth();
+
 // 終わるとき。作業スレッドを止める。
 void Shutdown();
 

@@ -22,6 +22,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <audioclient.h>
+#include <cfgmgr32.h>
 #include <mmdeviceapi.h>
 #endif
 
@@ -43,9 +44,10 @@ struct State {
 	std::thread thread;
 	std::atomic<bool> stop;
 	std::atomic<int> latencyMs;
+	std::atomic<bool> bluetooth;
 	int sampleRate;
 	bool running;
-	State() : stop(false), latencyMs(-1), sampleRate(48000), running(false) {}
+	State() : stop(false), latencyMs(-1), bluetooth(false), sampleRate(48000), running(false) {}
 };
 
 State &G() {
@@ -220,6 +222,24 @@ std::wstring DefaultDeviceId(IMMDeviceEnumerator *enumerator) {
 	return out;
 }
 
+// 出力の装置 (endpoint) が Bluetooth の機器のものか。endpoint の親の
+// デバイスノードが BTHENUM（A2DP）・BTHHFENUM（ハンズフリー）・BTHLE…（LE
+// Audio）なら Bluetooth。
+bool IsBluetoothEndpoint(const std::wstring &endpointId) {
+	std::wstring instance = L"SWD\\MMDEVAPI\\" + endpointId;
+	DEVINST node = 0;
+	if (CM_Locate_DevNodeW(&node, (DEVINSTID_W)&instance[0], CM_LOCATE_DEVNODE_NORMAL) !=
+	    CR_SUCCESS) {
+		return false;
+	}
+	DEVINST parent = 0;
+	if (CM_Get_Parent(&parent, node, 0) != CR_SUCCESS) return false;
+	wchar_t id[MAX_DEVICE_ID_LEN + 1];
+	if (CM_Get_Device_IDW(parent, id, MAX_DEVICE_ID_LEN, 0) != CR_SUCCESS) return false;
+	id[MAX_DEVICE_ID_LEN] = 0;
+	return _wcsnicmp(id, L"BTH", 3) == 0;
+}
+
 double NowSec() {
 	LARGE_INTEGER c, f;
 	QueryPerformanceCounter(&c);
@@ -250,6 +270,7 @@ void MeasureOnce(int) {
 			CoTaskMemFree(id);
 		}
 	}
+	G().bluetooth.store(IsBluetoothEndpoint(deviceId));
 	hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, NULL, (void **)&client);
 	if (FAILED(hr)) goto done;
 	hr = client->GetMixFormat(&format);
@@ -365,6 +386,16 @@ void SetActive(bool active, int sampleRate) {
 }
 
 int LatencyMs() { return G().latencyMs.load(std::memory_order_relaxed); }
+
+bool MeasuresBluetooth() {
+#if defined(_WIN32)
+	return false;
+#else
+	return true;
+#endif
+}
+
+bool OutputIsBluetooth() { return G().bluetooth.load(std::memory_order_relaxed); }
 
 void Shutdown() {
 	State &g = G();

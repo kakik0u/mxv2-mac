@@ -1294,7 +1294,7 @@ int main(int argc, char **argv) {
 			PollSong(ctx);
 			PollNotifyRequests(ctx, &filer, &pausedByFocus);
 			PollUnderruns(player, &underrunsSeen, &underrunNextMs);
-			PollOutputLatency(&player, &outputLatencyLogged);
+			PollOutputLatency(&player, settings, &outputLatencyLogged);
 			// Chromecast へは音だけ送り続ける（絵は描かないので、受信側には
 			// 最後の絵が出たまま）。受信側が終わったのはここでも拾う。
 			PollCast(&player, &pausedByFocus);
@@ -1342,7 +1342,7 @@ int main(int argc, char **argv) {
 		PollSong(ctx);
 		PollNotifyRequests(ctx, &filer, &pausedByFocus);
 		PollUnderruns(player, &underrunsSeen, &underrunNextMs);
-		PollOutputLatency(&player, &outputLatencyLogged);
+		PollOutputLatency(&player, settings, &outputLatencyLogged);
 
 		// 設定 UI はここで組み立てる。配色を変えると 640x480 の
 		// オフスクリーンを作り直すので、下の描画より先に回す。

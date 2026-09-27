@@ -70,6 +70,7 @@ Settings::Settings()
       masterVolume(0),  // 中央
       latencyAuto(true),
       latencyMs(0),
+      bluetoothLatencyMs(80),
       bookmarksDefaulted(true),
       windowX(-1),
       windowY(-1),
@@ -136,6 +137,9 @@ bool Settings::Load(const std::string &path) {
 	latencyMs = ini.GetInt("Play", "Latency", latencyMs);
 	if (latencyMs < kLatencyMsMin) latencyMs = kLatencyMsMin;
 	if (latencyMs > kLatencyMsMax) latencyMs = kLatencyMsMax;
+	bluetoothLatencyMs = ini.GetInt("Play", "BluetoothLatency", bluetoothLatencyMs);
+	if (bluetoothLatencyMs < 0) bluetoothLatencyMs = 0;
+	if (bluetoothLatencyMs > kBluetoothLatencyMsMax) bluetoothLatencyMs = kBluetoothLatencyMsMax;
 
 	// PDX の探索先。[Path] PdxCount があればその並び、無ければ旧形式の
 	// [Path] PDX（1 本）を 1 件目にする（次の保存で新形式へ書き換わる）。
@@ -247,6 +251,7 @@ bool Settings::Save(const std::string &path) const {
 	ini.SetInt("Play", "Volume", masterVolume);
 	ini.SetInt("Play", "LatencyAuto", latencyAuto ? 1 : 0);
 	ini.SetInt("Play", "Latency", latencyMs);
+	ini.SetInt("Play", "BluetoothLatency", bluetoothLatencyMs);
 
 	{
 		int count = (int)pdxPaths.size();
@@ -361,6 +366,7 @@ bool Settings::SaveFields(const std::string &path, unsigned fields) const {
 	if (fields & kFieldLatency) {
 		out.latencyAuto = latencyAuto;
 		out.latencyMs = latencyMs;
+		out.bluetoothLatencyMs = bluetoothLatencyMs;
 	}
 	if (fields & kFieldPdxPaths) out.pdxPaths = pdxPaths;
 	if (fields & kFieldFileSystems) out.fileSystems = fileSystems;

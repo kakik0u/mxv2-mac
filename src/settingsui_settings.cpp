@@ -13,7 +13,6 @@
 
 #include "settingsui_internal.h"
 
-#include "cast.h"
 #include "drawscreen.h"
 #include "filer.h"
 #include "outputlatency.h"
@@ -560,7 +559,11 @@ void SettingsUi::BuildSettingsWindow(Settings *settings, DrawScreen *draw, Playe
 				player->SetDisplayLatency(autoLatency,
 				                          MsToFrames(settings->latencyMs, player));
 			}
-			if (!autoLatency) {
+			// 行は自動の入り切りや出力先で出したり消したりしない（下の行が
+			// 上下に動くので。2026-09-27、ユーザーの指示）。使わないものは
+			// 淡色にし、注記も中身が無いときは空の行で高さを保つ。
+			ImGui::BeginDisabled(autoLatency);
+			{
 				int ms = settings->latencyMs;
 				if (ImGui::SliderInt(Msg("Settings.Latency"), &ms, Settings::kLatencyMsMin,
 				                     Settings::kLatencyMsMax, "%+d")) {
@@ -569,20 +572,45 @@ void SettingsUi::BuildSettingsWindow(Settings *settings, DrawScreen *draw, Playe
 					player->SetDisplayLatency(false, MsToFrames(ms, player));
 				}
 			}
+			ImGui::EndDisabled();
 			TextNote(MsgF("Settings.LatencyNow",
 			              MsgNum("%+.1f", FramesToMs(player->displayLatencyFrames(), player)),
 			              MsgNum("%d", player->audioBufferFrames()))
 			             .c_str());
 			// 自動のときは、測った出力先の遅れ（Bluetooth など）も足している
 			// （outputlatency.h、playctl.cpp の PollOutputLatency）。
-			if (autoLatency && outputlatency::Available()) {
-				if (cast::GetState() != cast::kIdle) {
-					TextNote(Msg("Settings.LatencyOutputCast"));
-				} else if (player->outputLatencyFrames() > 0) {
-					TextNote(MsgF("Settings.LatencyOutput",
-					              MsgNum("%.0f", FramesToMs(player->outputLatencyFrames(), player)))
-					             .c_str());
+			if (outputlatency::Available()) {
+				// Bluetooth のぶんを測れない環境（Windows）だけ、手で足す値を出す。
+				if (!outputlatency::MeasuresBluetooth()) {
+					ImGui::BeginDisabled(!autoLatency);
+					int bt = settings->bluetoothLatencyMs;
+					if (ImGui::SliderInt(Msg("Settings.LatencyBluetooth"), &bt, 0,
+					                     Settings::kBluetoothLatencyMsMax, "%d")) {
+						settings->bluetoothLatencyMs = bt;
+						changedFields_ |= Settings::kFieldLatency;
+					}
+					ImGui::EndDisabled();
+					TextNote(outputlatency::OutputIsBluetooth() ? Msg("Settings.LatencyBluetoothNow")
+					                                            : " ");
 				}
+				// キャスト中や手で決めているときは足さない（PollOutputLatency）ので、
+				// 空の行になる。
+				std::string note = " ";
+				if (autoLatency && player->outputLatencyFrames() > 0) {
+					const std::string total =
+					    MsgNum("%.0f", FramesToMs(player->outputLatencyFrames(), player));
+					// Bluetooth 遅延量を足しているときは、測った値と足した値を分けて見せる
+					// （全部を測ったように読めるので）。
+					if (!outputlatency::MeasuresBluetooth() && outputlatency::OutputIsBluetooth() &&
+					    outputlatency::LatencyMs() >= 0) {
+						note = MsgF("Settings.LatencyOutputBluetooth", total,
+						            MsgNum("%d", outputlatency::LatencyMs()),
+						            MsgNum("%d", settings->bluetoothLatencyMs));
+					} else {
+						note = MsgF("Settings.LatencyOutput", total);
+					}
+				}
+				TextNote(note.c_str());
 			}
 		}
 
