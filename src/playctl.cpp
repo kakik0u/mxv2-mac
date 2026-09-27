@@ -30,6 +30,65 @@ namespace {
 // アンダーラン（音の途切れ）を知らせる間隔 (ms)。まとめて 1 行にする。
 const uint32_t kUnderrunReportMs = 5000;
 
+// Bluetooth 側などの早送り・巻き戻しで飛ぶ幅 (ms)。長押しの間は繰り返し届く
+// 機器もあるので、キーボードの , . (3 秒) より大きめ、< > (30 秒) より小さめ。
+const uint32_t kRemoteSeekStepMs = 10 * 1000;
+
+// アーティスト欄に載せるフォルダの長さの上限（文字数）。
+const size_t kArtistMaxChars = 32;
+
+// UTF-8 の文字数。
+size_t Utf8Length(const std::string &s) {
+	size_t n = 0;
+	for (size_t i = 0; i < s.size(); i++) {
+		if (((unsigned char)s[i] & 0xc0) != 0x80) n++;
+	}
+	return n;
+}
+
+// MediaSession のアーティスト欄（車や AV アンプの画面）に出す名前。
+// 曲のあるフォルダから、kArtistMaxChars 文字を超えない範囲で親フォルダを
+// 遡って "/" でつなぐ（2026-09-27、ユーザーの指示）。"a/b/c/d.mdx" なら
+// "a/b/c" が収まれば全部、超えれば a、b の順に削る。c だけで超えるときは
+// c だけをそのまま使う。
+// ファイルシステムの頭（"assets:" など）、ドライブ（"C:"）、SAF のツリーの
+// URI の部分（":" や "%" を含む）は遡る先に含めない。
+std::string FolderNameOf(const std::string &ref) {
+	std::string path = ref;
+	const size_t scheme = path.find(':');
+	if (scheme != std::string::npos && scheme >= 2) path = path.substr(scheme + 1);
+
+	std::vector<std::string> parts;
+	std::string cur;
+	for (size_t i = 0; i < path.size(); i++) {
+		const char c = path[i];
+		if (c == '/' || c == '\\') {
+			parts.push_back(cur);
+			cur.clear();
+		} else {
+			cur += c;
+		}
+	}
+	// cur は曲のファイル名なので捨てる。parts の最後が曲のあるフォルダ。
+
+	std::string out;
+	for (size_t k = parts.size(); k > 0; k--) {
+		const std::string &name = parts[k - 1];
+		if (name.empty() || name.find(':') != std::string::npos ||
+		    name.find('%') != std::string::npos) {
+			break;
+		}
+		if (out.empty()) {
+			out = name;  // 曲のあるフォルダは長くてもそのまま
+			continue;
+		}
+		const std::string next = name + "/" + out;
+		if (Utf8Length(next) > kArtistMaxChars) break;
+		out = next;
+	}
+	return out;
+}
+
 // PDX の探索先。-pdxpath の指定と設定の一覧を合わせたもの（この順）。
 // 入力は裸のパスでも ref でもよいので、ここで ref へ揃える。
 std::vector<std::string> PdxSearchDirs(const mxv2::Vfs &vfs, const Options &opt,
@@ -328,6 +387,8 @@ void UpdateNowPlaying(const mxv2::Player &player, const std::string &currentPath
 			st.text += mxv2::Msg("Notify.Repeat");
 		}
 
+		st.artist = FolderNameOf(currentPath);
+
 		st.posMs = player.nowTimeMs();
 		st.durMs = player.playTimeMs();
 	}
@@ -350,7 +411,24 @@ void PollNotifyRequests(const PlayContext &ctx, mxv2::Filer *filer, bool *paused
 		switch (req) {
 			case mxv2::nowplaying::kRequestPlay:
 				*pausedByFocus = false;
-				if (player->paused()) player->Resume();
+				if (player->playing()) {
+					if (player->paused()) player->Resume();
+					break;
+				}
+				// 止まっている（[■] のあと・起動してまだ演奏していない）。
+				// Bluetooth 側の再生ボタン（車のハンドルなど）で始められるよう、
+				// 最後の曲を掛け直す。無ければカーソルの MDX、それも無ければ
+				// 一覧の次の MDX。画面の [▶] と違ってカーソルより最後の曲を
+				// 先にするのは、画面を見ずに押すボタンだから。
+				if (!ctx.currentPath->empty()) {
+					StartPlay(ctx, *ctx.currentPath);
+				} else if (filer->itemCount() > 0 &&
+				           (filer->item(filer->cursor()).type & mxv2::kFileItemMdx) != 0 &&
+				           filer->Open(&path) == mxv2::kFilerOpenPlay) {
+					StartPlay(ctx, path);
+				} else if (filer->NextMdx(&path)) {
+					StartPlay(ctx, path);
+				}
 				break;
 			case mxv2::nowplaying::kRequestPause:
 				*pausedByFocus = false;
@@ -365,6 +443,29 @@ void PollNotifyRequests(const PlayContext &ctx, mxv2::Filer *filer, bool *paused
 			case mxv2::nowplaying::kRequestStop:
 				player->Stop();
 				break;
+			case mxv2::nowplaying::kRequestSeekForward:
+			case mxv2::nowplaying::kRequestSeekBack: {
+				if (!player->playing()) break;
+				const uint32_t now = player->nowTimeMs();
+				uint32_t want = 0;
+				if (req == mxv2::nowplaying::kRequestSeekBack) {
+					want = (now > kRemoteSeekStepMs) ? (now - kRemoteSeekStepMs) : 0;
+				} else {
+					want = now + kRemoteSeekStepMs;
+					const uint32_t total = player->playTimeMs();
+					if (total != 0 && want > total) want = total;
+				}
+				player->SeekMs(want);
+				break;
+			}
+			case mxv2::nowplaying::kRequestSeekTo: {
+				if (!player->playing()) break;
+				uint32_t want = mxv2::nowplaying::TakeSeekMs();
+				const uint32_t total = player->playTimeMs();
+				if (total != 0 && want > total) want = total;
+				player->SeekMs(want);
+				break;
+			}
 			case mxv2::nowplaying::kRequestFocusLost:
 				// 鳴っていたときだけ印を付ける。
 				if (player->playing() && !player->paused()) {

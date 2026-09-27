@@ -2,7 +2,12 @@ package net.gorry.mxv2;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.media.MediaMetadata;
+import android.media.session.MediaSession;
+import android.media.session.PlaybackState;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 
@@ -21,6 +26,13 @@ import java.util.ArrayDeque;
  * という受け渡しだけを持つ。**文言は message.ini からネイティブ経由で渡ってくる**
  * ので、ここにも strings.xml にも日本語は置かない。
  *
+ * **MediaSession（ヘッドセット・車・AV アンプなど Bluetooth 側のボタンの受け口）は
+ * ここが持つ。** アプリが動いている間ずっと置いておき、止めている間も演奏前も
+ * 再生ボタンを受ける（カーオーディオでエンジンを掛けたときにハンドルの再生
+ * ボタンで始められるように。memo/bluetooth.md）。通知のサービスは演奏している
+ * 間だけ立ち、このセッションの token を借りる。以前はサービスが持っていたので、
+ * 停止でサービスごと消え、以後の再生ボタンが届かなかった。
+ *
  * **呼ばれるスレッドが違う**（ネイティブは SDL のメインスレッド、サービスは
  * UI スレッド）ので、状態を触るところは synchronized にしてある。
  */
@@ -36,8 +48,18 @@ public class PlaybackBridge {
 	public static final int REQ_STOP = 5;
 	public static final int REQ_FOCUS_LOST = 6;
 	public static final int REQ_FOCUS_GAINED = 7;
+	public static final int REQ_SEEK_FORWARD = 8;
+	public static final int REQ_SEEK_BACK = 9;
+	/** 位置は takeSeekMs で取る。 */
+	public static final int REQ_SEEK_TO = 10;
 
 	private static Activity sActivity;
+
+	/** Bluetooth 側などのボタンの受け口。setActivity で作り、release で捨てる。 */
+	private static MediaSession sSession;
+	private static Handler sHandler;
+	/** REQ_SEEK_TO の行き先 (ms)。続けて来たら最後のものだけ使う。 */
+	private static long sSeekToMs;
 
 	/** 起きているサービス。onCreate/onDestroy で自分を入れ替える。 */
 	private static PlaybackService sService;
@@ -59,6 +81,8 @@ public class PlaybackBridge {
 	private static boolean sActive;
 	private static String sTitle = "";
 	private static String sText = "";
+	/** セッション（車の画面など）に出すアーティスト欄。フォルダ名。 */
+	private static String sArtist = "";
 	private static boolean sPlaying;
 	private static long sPosMs;
 	private static long sDurMs;
@@ -69,6 +93,21 @@ public class PlaybackBridge {
 
 	public static void setActivity(Activity a) {
 		sActivity = a;
+		createSession(a);
+	}
+
+	/** Activity の onDestroy から。セッションを捨てる。 */
+	public static void release() {
+		if (sSession != null) {
+			sSession.setActive(false);
+			sSession.release();
+			sSession = null;
+		}
+	}
+
+	/** 通知の MediaStyle に渡す。まだ無ければ null。 */
+	static MediaSession.Token sessionToken() {
+		return (sSession != null) ? sSession.getSessionToken() : null;
 	}
 
 	public static boolean available() {
@@ -99,8 +138,8 @@ public class PlaybackBridge {
 	 * 変わるだけならサービスは動いたままなので、バックグラウンドでの自動送り
 	 * (CONT/REPEAT) でも起こし直しは要らない。
 	 */
-	public static void update(String title, String text, boolean playing, long posMs,
-	                          long durMs) {
+	public static void update(String title, String text, String artist, boolean playing,
+	                          long posMs, long durMs) {
 		final Activity a = sActivity;
 		if (a == null) return;
 
@@ -109,6 +148,7 @@ public class PlaybackBridge {
 			sStampMs = SystemClock.elapsedRealtime();
 			sTitle = title;
 			sText = text;
+			sArtist = artist;
 			sPlaying = playing;
 			sPosMs = posMs;
 			sDurMs = durMs;
@@ -128,9 +168,11 @@ public class PlaybackBridge {
 					sStarted = false;
 				}
 				PipBridge.onStateChanged();
+				postSessionUpdate();
 				return;  // 起動時に onStartCommand が出す
 			}
 		}
+		postSessionUpdate();
 		refresh();
 		// 小窓のボタン（一時停止 / 再開）と、自動で入るかどうか。
 		PipBridge.onStateChanged();
@@ -143,6 +185,8 @@ public class PlaybackBridge {
 			sActive = false;
 		}
 		PipBridge.onStateChanged();
+		// セッションは残して「止まっている」にする（再生ボタンを受け続ける）。
+		postSessionUpdate();
 		synchronized (PlaybackBridge.class) {
 			if (!sStarted) return;
 			sStarted = false;
@@ -158,6 +202,132 @@ public class PlaybackBridge {
 	public static synchronized int takeRequest() {
 		if (sRequests.isEmpty()) return REQ_NONE;
 		return sRequests.poll().intValue();
+	}
+
+	/** REQ_SEEK_TO の行き先 (ms)。 */
+	public static synchronized long takeSeekMs() {
+		return sSeekToMs;
+	}
+
+	// -------------------------------------------------------------------
+	// MediaSession
+	// -------------------------------------------------------------------
+
+	private static void createSession(Activity a) {
+		if (sSession != null) return;
+		sHandler = new Handler(Looper.getMainLooper());
+		// アプリの Context で作る（Activity が作り直されても使い続ける）。
+		sSession = new MediaSession(a.getApplicationContext(), "mxv2");
+		sSession.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS |
+		                  MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
+		sSession.setCallback(new MediaSession.Callback() {
+			@Override
+			public void onPlay() {
+				postRequest(REQ_PLAY);
+			}
+
+			@Override
+			public void onPause() {
+				postRequest(REQ_PAUSE);
+			}
+
+			@Override
+			public void onStop() {
+				postRequest(REQ_STOP);
+			}
+
+			@Override
+			public void onSkipToNext() {
+				postRequest(REQ_NEXT);
+			}
+
+			@Override
+			public void onSkipToPrevious() {
+				postRequest(REQ_PREV);
+			}
+
+			// 早送り・巻き戻し（車のハンドルやリモコンの長押しで来ることが多い）。
+			@Override
+			public void onFastForward() {
+				postRequest(REQ_SEEK_FORWARD);
+			}
+
+			@Override
+			public void onRewind() {
+				postRequest(REQ_SEEK_BACK);
+			}
+
+			// 車の画面・ロック画面の位置の棒から。
+			@Override
+			public void onSeekTo(long pos) {
+				synchronized (PlaybackBridge.class) {
+					sSeekToMs = pos;
+				}
+				postRequest(REQ_SEEK_TO);
+			}
+		});
+		updateSession();
+		sSession.setActive(true);
+	}
+
+	private static void postSessionUpdate() {
+		final Handler h = sHandler;
+		if (h == null) return;
+		h.post(new Runnable() {
+			public void run() {
+				updateSession();
+			}
+		});
+	}
+
+	/** セッションへ最後に渡した曲の情報。同じなら渡し直さない（AVRCP の相手には
+	 *  曲が替わったように見えることがある）。 */
+	private static String sShownTitle;
+	private static String sShownArtist;
+	private static long sShownDurMs = -1;
+
+	/** UI スレッドで。今の状態をセッションへ写す。 */
+	private static void updateSession() {
+		final MediaSession session = sSession;
+		if (session == null) return;
+		final Snapshot s = snapshot();
+
+		// 止めている間も最後の曲の情報は残す（車の画面に何も出ないよりよい）。
+		if (s.active && !(s.title.equals(sShownTitle) && s.artist.equals(sShownArtist) &&
+		                  s.durMs == sShownDurMs)) {
+			sShownTitle = s.title;
+			sShownArtist = s.artist;
+			sShownDurMs = s.durMs;
+			MediaMetadata.Builder md = new MediaMetadata.Builder();
+			md.putString(MediaMetadata.METADATA_KEY_TITLE, s.title);
+			// 状態の文字（演奏中・CONT など）は通知の本文だけに出す。
+			// ここへ入れると車や AV アンプの画面にそのまま出る。
+			md.putString(MediaMetadata.METADATA_KEY_ARTIST, s.artist);
+			md.putLong(MediaMetadata.METADATA_KEY_DURATION, s.durMs);
+			session.setMetadata(md.build());
+		}
+
+		PlaybackState.Builder ps = new PlaybackState.Builder();
+		ps.setActions(PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE |
+		              PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_STOP |
+		              PlaybackState.ACTION_SKIP_TO_NEXT |
+		              PlaybackState.ACTION_SKIP_TO_PREVIOUS |
+		              PlaybackState.ACTION_FAST_FORWARD | PlaybackState.ACTION_REWIND |
+		              PlaybackState.ACTION_SEEK_TO);
+		if (!s.active) {
+			ps.setState(PlaybackState.STATE_STOPPED, 0, 0.0f);
+		} else {
+			// 位置は受け取った時刻から進める（小窓と同じ）。
+			long pos = s.posMs;
+			final long now = SystemClock.elapsedRealtime();
+			if (s.playing) {
+				pos += now - s.stampMs;
+				if (s.durMs > 0 && pos > s.durMs) pos = s.durMs;
+			}
+			ps.setState(s.playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
+			            pos, s.playing ? 1.0f : 0.0f, now);
+		}
+		session.setPlaybackState(ps.build());
 	}
 
 	// -------------------------------------------------------------------
@@ -203,6 +373,7 @@ public class PlaybackBridge {
 		s.active = sActive;
 		s.title = sTitle;
 		s.text = sText;
+		s.artist = sArtist;
 		s.playing = sPlaying;
 		s.posMs = sPosMs;
 		s.durMs = sDurMs;
@@ -221,6 +392,7 @@ public class PlaybackBridge {
 		boolean active;
 		String title;
 		String text;
+		String artist;
 		boolean playing;
 		long posMs;
 		long durMs;

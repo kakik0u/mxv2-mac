@@ -31,6 +31,11 @@ enum Request {
 	kRequestFocusLost,
 	// 音を返してもらった。kRequestFocusLost で止めたぶんだけ再開する。
 	kRequestFocusGained,
+	// 早送り・巻き戻し（Bluetooth 側の長押しなど）。決まった幅だけ飛ぶ。
+	kRequestSeekForward,
+	kRequestSeekBack,
+	// 位置を指定して飛ぶ（車の画面・ロック画面の位置の棒）。位置は TakeSeekMs。
+	kRequestSeekTo,
 };
 
 // 通知に出す文言。SetLabels は Update より先に一度だけ呼ぶ。
@@ -49,7 +54,9 @@ struct State {
 	bool active;   // 曲を持っている（false なら通知を消す）
 	bool playing;  // 鳴っている（false は一時停止）
 	std::string title;
-	std::string text;  // 状態の行（「演奏中」＋ CONT / REPEAT など）
+	std::string text;  // 状態の行（「演奏中」＋ CONT / REPEAT など）。通知の本文だけ
+	// MediaSession のアーティスト欄（車や AV アンプの画面に出る）。フォルダ名。
+	std::string artist;
 	uint32_t posMs;
 	uint32_t durMs;
 
@@ -70,6 +77,8 @@ void Shutdown();
 
 // 通知から届いた要求を 1 つ取り出す。無ければ kRequestNone。
 Request TakeRequest();
+// kRequestSeekTo の行き先 (ms)。
+uint32_t TakeSeekMs();
 
 }  // namespace nowplaying
 }  // namespace mxv2

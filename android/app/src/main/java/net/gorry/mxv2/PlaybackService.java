@@ -11,9 +11,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.media.AudioManager;
-import android.media.MediaMetadata;
 import android.media.session.MediaSession;
-import android.media.session.PlaybackState;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -29,7 +27,7 @@ import android.util.Log;
  * プロセスを止めてしまう**ので、演奏しているあいだはこれを走らせる。
  *
  * 出す内容はネイティブ側が決めて {@link PlaybackBridge} に預ける。ここは
- * それを Notification と MediaSession の形にするだけで、演奏そのものには
+ * それを Notification の形にするだけで、演奏そのものには
  * 触らない（ボタンが押されたら PlaybackBridge へ要求を積み、ネイティブの
  * メインループが実行する）。
  */
@@ -47,7 +45,6 @@ public class PlaybackService extends Service {
 	static final String ACTION_STOP = "net.gorry.mxv2.action.STOP";
 
 	private Handler mHandler;
-	private MediaSession mSession;
 	private PowerManager.WakeLock mWakeLock;
 	private AudioManager mAudioManager;
 	private boolean mHasFocus;
@@ -91,36 +88,9 @@ public class PlaybackService extends Service {
 
 		createChannel();
 
-		mSession = new MediaSession(this, "mxv2");
-		mSession.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS |
-		                  MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
-		mSession.setCallback(new MediaSession.Callback() {
-			@Override
-			public void onPlay() {
-				PlaybackBridge.postRequest(PlaybackBridge.REQ_PLAY);
-			}
-
-			@Override
-			public void onPause() {
-				PlaybackBridge.postRequest(PlaybackBridge.REQ_PAUSE);
-			}
-
-			@Override
-			public void onStop() {
-				PlaybackBridge.postRequest(PlaybackBridge.REQ_STOP);
-			}
-
-			@Override
-			public void onSkipToNext() {
-				PlaybackBridge.postRequest(PlaybackBridge.REQ_NEXT);
-			}
-
-			@Override
-			public void onSkipToPrevious() {
-				PlaybackBridge.postRequest(PlaybackBridge.REQ_PREV);
-			}
-		});
-		mSession.setActive(true);
+		// ボタンの受け口 (MediaSession) は PlaybackBridge が持つ（アプリが動いて
+		// いる間ずっと。止めている間も再生ボタンを受けるため）。ここは通知に
+		// その token を使うだけ。
 
 		PowerManager pm = (PowerManager)getSystemService(Context.POWER_SERVICE);
 		if (pm != null) {
@@ -178,11 +148,6 @@ public class PlaybackService extends Service {
 		}
 		abandonFocus();
 		releaseWakeLock();
-		if (mSession != null) {
-			mSession.setActive(false);
-			mSession.release();
-			mSession = null;
-		}
 		stopForeground(true);
 		mForeground = false;
 		super.onDestroy();
@@ -203,8 +168,6 @@ public class PlaybackService extends Service {
 
 	private void refresh() {
 		final PlaybackBridge.Snapshot s = PlaybackBridge.snapshot();
-
-		updateSession(s);
 
 		final Notification n = buildNotification(s);
 		if (!mForeground) {
@@ -228,25 +191,6 @@ public class PlaybackService extends Service {
 		} else {
 			releaseWakeLock();
 		}
-	}
-
-	private void updateSession(PlaybackBridge.Snapshot s) {
-		if (mSession == null) return;
-
-		MediaMetadata.Builder md = new MediaMetadata.Builder();
-		md.putString(MediaMetadata.METADATA_KEY_TITLE, s.title);
-		md.putString(MediaMetadata.METADATA_KEY_ARTIST, s.text);
-		md.putLong(MediaMetadata.METADATA_KEY_DURATION, s.durMs);
-		mSession.setMetadata(md.build());
-
-		PlaybackState.Builder ps = new PlaybackState.Builder();
-		ps.setActions(PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE |
-		              PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_STOP |
-		              PlaybackState.ACTION_SKIP_TO_NEXT |
-		              PlaybackState.ACTION_SKIP_TO_PREVIOUS);
-		ps.setState(s.playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
-		            s.posMs, s.playing ? 1.0f : 0.0f);
-		mSession.setPlaybackState(ps.build());
 	}
 
 	private Notification buildNotification(PlaybackBridge.Snapshot s) {
@@ -278,9 +222,10 @@ public class PlaybackService extends Service {
 		b.addAction(action(android.R.drawable.ic_menu_close_clear_cancel, s.stopLabel,
 		                   ACTION_STOP));
 
-		if (mSession != null) {
+		final MediaSession.Token token = PlaybackBridge.sessionToken();
+		if (token != null) {
 			Notification.MediaStyle style = new Notification.MediaStyle();
-			style.setMediaSession(mSession.getSessionToken());
+			style.setMediaSession(token);
 			// 畳んだときに見えるのは 3 つまで。前の曲 / 一時停止 / 次の曲。
 			style.setShowActionsInCompactView(0, 1, 2);
 			b.setStyle(style);

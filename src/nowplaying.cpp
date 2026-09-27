@@ -32,9 +32,10 @@ struct PlaybackJni {
 	jmethodID update;
 	jmethodID shutdown;
 	jmethodID takeRequest;
+	jmethodID takeSeekMs;
 };
 
-PlaybackJni g = { false, false, 0, 0, 0, 0, 0, 0 };
+PlaybackJni g = { false, false, 0, 0, 0, 0, 0, 0, 0 };
 
 // 出している内容。同じものを出し直さないために覚えておく。
 struct Shown {
@@ -43,11 +44,12 @@ struct Shown {
 	bool playing;
 	std::string title;
 	std::string text;
+	std::string artist;
 	uint32_t posMs;    // 最後に渡した演奏位置
 	uint32_t atTicks;  // それを渡した時刻 (SDL_GetTicks)
 };
 
-Shown g_shown = { false, false, false, std::string(), std::string(), 0, 0 };
+Shown g_shown = { false, false, false, std::string(), std::string(), std::string(), 0, 0 };
 
 // 演奏位置が「そのまま進んだ場合」からこれだけ外れたら出し直す (ms)。
 // ロック画面のシークバーは渡した位置から自分で進むので、ふだんは放って
@@ -82,13 +84,14 @@ bool EnsureJni() {
 	    g.cls, "setLabels",
 	    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
 	    "Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
-	g.update = env->GetStaticMethodID(g.cls, "update",
-	                                  "(Ljava/lang/String;Ljava/lang/String;ZJJ)V");
+	g.update = env->GetStaticMethodID(
+	    g.cls, "update", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJJ)V");
 	g.shutdown = env->GetStaticMethodID(g.cls, "shutdown", "()V");
 	g.takeRequest = env->GetStaticMethodID(g.cls, "takeRequest", "()I");
+	g.takeSeekMs = env->GetStaticMethodID(g.cls, "takeSeekMs", "()J");
 
 	g.ok = (g.available != 0 && g.setLabels != 0 && g.update != 0 && g.shutdown != 0 &&
-	        g.takeRequest != 0);
+	        g.takeRequest != 0 && g.takeSeekMs != 0);
 	if (!g.ok) {
 		env->ExceptionClear();
 		printf("warning  : PlaybackBridge methods not found (no playback notification)\n");
@@ -184,7 +187,7 @@ void Update(const State &state) {
 	// 見比べない。**飛んだとき**（シーク・掛け直し）だけ渡し直す。
 	bool same = g_shown.valid && g_shown.active == state.active &&
 	            g_shown.playing == state.playing && g_shown.title == state.title &&
-	            g_shown.text == state.text;
+	            g_shown.text == state.text && g_shown.artist == state.artist;
 	if (same && state.active && state.playing) {
 		const uint32_t expect = g_shown.posMs + (now - g_shown.atTicks);
 		const uint32_t diff =
@@ -198,6 +201,7 @@ void Update(const State &state) {
 	g_shown.playing = state.playing;
 	g_shown.title = state.title;
 	g_shown.text = state.text;
+	g_shown.artist = state.artist;
 	g_shown.posMs = state.posMs;
 	g_shown.atTicks = now;
 
@@ -209,11 +213,13 @@ void Update(const State &state) {
 
 	jstring title = NewJString(env, state.title);
 	jstring text = NewJString(env, state.text);
-	env->CallStaticVoidMethod(g.cls, g.update, title, text,
+	jstring artist = NewJString(env, state.artist);
+	env->CallStaticVoidMethod(g.cls, g.update, title, text, artist,
 	                          state.playing ? JNI_TRUE : JNI_FALSE, (jlong)state.posMs,
 	                          (jlong)state.durMs);
 	env->DeleteLocalRef(title);
 	env->DeleteLocalRef(text);
+	env->DeleteLocalRef(artist);
 }
 
 void Shutdown() {
@@ -227,8 +233,14 @@ Request TakeRequest() {
 	if (!Available()) return kRequestNone;
 	const jint r = Env()->CallStaticIntMethod(g.cls, g.takeRequest);
 	// Java 側の定数はこの enum と同じ並び (PlaybackBridge.REQ_*)。
-	if (r <= kRequestNone || r > kRequestFocusGained) return kRequestNone;
+	if (r <= kRequestNone || r > kRequestSeekTo) return kRequestNone;
 	return (Request)r;
+}
+
+uint32_t TakeSeekMs() {
+	if (!Available()) return 0;
+	const jlong ms = Env()->CallStaticLongMethod(g.cls, g.takeSeekMs);
+	return (ms > 0) ? (uint32_t)ms : 0;
 }
 
 }  // namespace nowplaying
@@ -249,6 +261,9 @@ void Update(const State &) {}
 void Shutdown() {}
 Request TakeRequest() {
 	return kRequestNone;
+}
+uint32_t TakeSeekMs() {
+	return 0;
 }
 
 }  // namespace nowplaying

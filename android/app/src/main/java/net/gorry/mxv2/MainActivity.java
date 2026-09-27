@@ -126,6 +126,12 @@ public class MainActivity extends SDLActivity {
 	}
 
 	@Override
+	protected void onDestroy() {
+		PlaybackBridge.release();
+		super.onDestroy();
+	}
+
+	@Override
 	protected void onActivityResult(int request, int result, android.content.Intent data) {
 		super.onActivityResult(request, result, data);
 		SafBridge.onActivityResult(request, result, data);

@@ -132,3 +132,55 @@ BT525 FM は車用の FM トランスミッター（A2DP / HFP / AVRCP）。Wind
 - Pixel 7a + BT525: 測った値 349ms → 表示の遅らせ 391.7ms。ユーザーが「問題ない」と確認。
 - Windows 有線（既定の出力）: 53ms（headless で測定）→ 表示の遅らせ 63.7ms（48kHz、buffer 512）。
   見た目での確認はまだ。**Windows + Bluetooth で約 120ms が測れるかは未確認**。
+
+## BT 側からの操作（メインの目的。2026-09-27）
+
+目的の優先度（ユーザー）: **メインはカーオーディオにつないだときにハンドルリモコンなどで
+操作できること**（AVRCP）。画面と音の同期はサブ。BT525 FM にはボタンが無く、代わりに
+想定していた TX-NR676E のリモコンは TX-NR676E がつながらないので使えない。
+
+AVRCP のボタン（passthrough）は Android の中で KeyEvent になり、MediaSessionService が
+メディアボタンのセッションへ配る。`adb shell cmd media_session dispatch <key>` はその
+配り口から入れるので、アプリから見ると同じ。これで試した結果（Pixel 7a）:
+
+| キー | 結果 |
+|---|---|
+| play-pause | 効く（一時停止・再開） |
+| next / previous | 効く（曲が替わる） |
+| fast-forward / rewind | **何も起きない**（PlaybackState の actions に無く、Callback も無い） |
+| stop | 止まり、**PlaybackService ごと MediaSession が消える**（"Media button session is changed to null"） |
+| stop のあとの play | **届かない**（受け手のセッションが無い） |
+
+ほかに気付いたこと:
+- 起動して一度も演奏していない間はサービスが無く、セッションも無い → 車の再生ボタンで始められない。
+- MediaMetadata: TITLE に MDX のタイトル行が丸ごと（版や (c) まで）、ARTIST に状態の文字
+  （「演奏中 CONT REPEAT」）が入っている。車の画面にはこれがそのまま出る。
+
+TX-NR676E（Onkyo）は PC からはつながらなかったが、**Pixel 7a からはつながった**（2026-09-27 22:10）。アンプのリモコンで実物の AVRCP を試せる。
+
+### TX-NR676E のリモコン（実物の AVRCP、2026-09-27 22:16〜22:20）
+
+- 左右キー → `KEYCODE_MEDIA_NEXT` / `KEYCODE_MEDIA_PREVIOUS` が届き、曲が替わる（ユーザー確認・ログ一致）。
+- PAUSE ボタン → アンプが再生状態（AVRCP の play status）を見て `KEYCODE_MEDIA_PAUSE` と
+  `KEYCODE_MEDIA_PLAY` を交互に送ってくる。どちらも効く（ユーザー確認）。
+- 絶対音量（AVRCP absolute volume）は非対応の機器（"abs vol not supported"）。
+- 停止・早送り・巻き戻しはこの試験では押していない。
+
+### BT 側からの操作の修正（2026-09-27）
+
+- **MediaSession を PlaybackService から PlaybackBridge へ移した**（setActivity で作り、
+  MainActivity.onDestroy で release）。アプリが動いている間ずっと active。止めたら STOPPED に
+  するだけで消さない。通知は `PlaybackBridge.sessionToken()` を借りる。
+- 止まっているときの PLAY（native の kRequestPlay）: 最後の曲 → カーソルの MDX → 一覧の次の MDX
+  の順で掛ける（画面の [▶] と違い、画面を見ずに押すボタンなので最後の曲を先に）。
+- 早送り・巻き戻し = ±10 秒（kRemoteSeekStepMs）、SEEK_TO も受ける（TakeSeekMs）。
+- メタデータ: TITLE = MDX のタイトル行、ARTIST = 曲のあるフォルダから 32 文字を超えない範囲で親を遡って "/" でつないだもの（曲のあるフォルダだけで超えるならそれだけ。ユーザーの指示。スキーム・ドライブ・SAF の URI 部分は含めない）。状態の文字は通知の本文だけ。
+  同じ内容なら渡し直さない。
+- 位置を 1 秒ごとに渡し直すのを試した（TX-NR676E の TV 出力で現在位置が "--:--:--"、logcat に
+  "No update to play position"）。渡し直すと毎秒 SendMediaUpdate が出るようになったが、表示は
+  "--:--:--" のまま。YouTube / YT Music でも同じなので**アンプ側の仕様**（ユーザー判断）。
+  渡し直しは取り下げた（毎秒のやり取りを増やすだけなので）。
+
+adb（`cmd media_session dispatch`）で確認: 演奏前の play で始まる / ff・rew で ±10 秒 /
+stop で STOPPED、セッションはメディアボタンの受け手のまま / stop 後の play で再開 /
+**stop → ホーム → 40 秒後の play でも始まる**。
