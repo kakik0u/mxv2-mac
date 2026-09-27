@@ -101,6 +101,7 @@ Player::Player()
       audioTap_(0),
       displayLatencyFrames_(0),
       audioBufferFrames_(0),
+      outputLatencyFrames_(0),
       statusRefresh_(false),
       displayReset_(false),
       masterVolume_(0),
@@ -234,7 +235,7 @@ bool Player::Open(const Config &config, std::string *err) {
 	// 実際の値は SDL が返してきた have.samples を使う（要求どおりとは限らない）。
 	audioBufferFrames_ = (have.samples > 0) ? (int)have.samples : config_.audioBlockFrames;
 	displayLatencyFrames_ =
-	    config_.displayLatencyAuto ? audioBufferFrames_ : config_.displayLatencyFrames;
+	    config_.displayLatencyAuto ? AutoLatencyFrames() : config_.displayLatencyFrames;
 
 	// OPM 割り込みコールバックを登録。
 	// portable_mdx (MXDRV_ENABLE_PORTABLE_CODE) では MXCALLBACK_OPMINT は
@@ -618,7 +619,19 @@ void Player::SetFastPlay(bool on) {
 void Player::SetDisplayLatency(bool useAuto, int frames) {
 	config_.displayLatencyAuto = useAuto;
 	config_.displayLatencyFrames = frames;
-	displayLatencyFrames_ = useAuto ? audioBufferFrames_ : frames;
+	displayLatencyFrames_ = useAuto ? AutoLatencyFrames() : frames;
+}
+
+void Player::SetOutputLatency(int frames) {
+	outputLatencyFrames_ = (frames > 0) ? frames : 0;
+	if (config_.displayLatencyAuto) displayLatencyFrames_ = AutoLatencyFrames();
+}
+
+// 自動のときの遅らせ量。SDL のバッファ 1 つぶんに、その先（OS のミキサー・
+// 装置・Bluetooth）の遅れを足す。Pixel 7a + Bluetooth で、手で合わせた値
+// 400〜410ms に対して 42.7 + 365〜385ms（memo/bluetooth.md）。
+int Player::AutoLatencyFrames() const {
+	return audioBufferFrames_ + outputLatencyFrames_;
 }
 
 // 表示に使う再生位置。playedFrames_ は「SDL へ渡した位置」なので、

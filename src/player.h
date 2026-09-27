@@ -117,8 +117,9 @@ public:
 		// **画面が音より先に進む**。ここでその差を戻す。
 		// 正の値で表示が遅れ、負の値で先に進む。
 		//
-		// displayLatencyAuto が true なら、開いたときの装置のバッファ長を
-		// そのまま使う（既定）。false のときだけ displayLatencyFrames を見る。
+		// displayLatencyAuto が true なら、開いたときの装置のバッファ長に
+		// 出力先の遅れ（SetOutputLatency。Bluetooth など）を足して使う（既定）。
+		// false のときだけ displayLatencyFrames を見る。
 		bool displayLatencyAuto;
 		int displayLatencyFrames;
 
@@ -206,8 +207,13 @@ public:
 	int audioBufferFrames() const { return audioBufferFrames_; }
 	int sampleRate() const { return config_.sampleRate; }
 	// 表示の遅らせ量を後から変える（設定ウィンドウ用）。auto なら装置の
-	// バッファ長を使い、frames は見ない。次のフレームから効く。
+	// バッファ長（＋出力先の遅れ）を使い、frames は見ない。次のフレームから効く。
 	void SetDisplayLatency(bool useAuto, int frames);
+	// 出力先の遅れ（フレーム。outputlatency.h で測った値）。auto のときだけ
+	// バッファ長に足す。0 以下なら足さない。次のフレームから効く。
+	void SetOutputLatency(int frames);
+	int outputLatencyFrames() const { return outputLatencyFrames_; }
+	bool displayLatencyAuto() const { return config_.displayLatencyAuto; }
 
 	uint64_t playedFrames() const { return playedFrames_.load(std::memory_order_acquire); }
 
@@ -245,6 +251,8 @@ private:
 	AudioTap audioTap_;
 	int displayLatencyFrames_;  // Open() で決めた実効値
 	int audioBufferFrames_;     // SDL が返してきたバッファ長
+	int outputLatencyFrames_;   // 出力先の遅れ（SetOutputLatency）
+	int AutoLatencyFrames() const;
 	int DecodeThreadMain();
 	void PollStep(uint64_t frame);
 

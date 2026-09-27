@@ -101,6 +101,9 @@ void UpdateNowPlaying(const mxv2::Player &player, const std::string &currentPath
 void PollNotifyRequests(const PlayContext &ctx, mxv2::Filer *filer, bool *pausedByFocus);
 // 音が途切れたことをときどきログに出す。
 void PollUnderruns(const mxv2::Player &player, uint32_t *last, uint32_t *nextMs);
+// 出力先の遅れ（Bluetooth など）を測り、自動の表示の遅らせへ足す。
+// 変わったときはログにも出す（lastLoggedMs は最後に出した値。初めは -1）。
+void PollOutputLatency(mxv2::Player *player, int *lastLoggedMs);
 // 通知に出す文言をカタログから渡す（起動時と、言語を替えたとき）。
 void SetNotifyLabels();
 

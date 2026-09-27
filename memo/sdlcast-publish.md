@@ -31,7 +31,7 @@ mxv2 とは別のリポジトリとして公開する。作り・経緯は memo/
 | ライセンス | Apache 2.0。**決定済み**（2026-09-25、ユーザー） | ソースに Copyright ヘッダを書かない流儀も mxv2 のまま |
 | mxv2 との関係 | **sdlcastg を本家にし、mxv2 は `git subtree` で取り込む** | mxv2 を clone した人の手間が増えない（submodule だと `--recursive` が要る）。直すときは mxv2 側で直して `subtree push` も可 |
 | 依存の入れ方 | 今のまま「置き場所を CMake 変数で渡す」。既定をリポジトリ内の `third_party/` に変える | mxv2 は同じ変数に自分の third_party を渡すだけで済む。vcpkg のマニフェストモードは、triplet が 1 つしか残らない件（cast.md 手順 4）で見送った |
-| 文書の言葉 | README は英語（README.md）と日本語（README.ja.md）。ソースのコメントは日本語のまま | 見つけてもらうのは英語。コメントまで訳すと mxv2 と二重管理になる |
+| 文書の言葉 | **日本語が主（README.md / BUILD.md）、英語が副（README.en.md / BUILD.en.md）**。README.md の題名の直下に英語の要約と英語版へのリンク。ソースのコメントは日本語のまま | 最初は英語を主にしたが、書く・直すのは日本語なので、ユーザーの都合で入れ替えた（2026-09-26） |
 | 対応環境の表明 | Windows x64 / Android（arm64・armv7）を「確認済み」、Linux は「たぶん動く（未確認）」 | 確かめていないものを対応とは書かない |
 | 版 | **mxv2 と同じ流儀（`2026.0925.1` の形）。決定済み**（2026-09-25、ユーザー）。値は sdlcastg/Profile.ini（著作者専用）の `[Version] Text` / `Number`。タグも mxv2 と同じく `v` を付けない（`2026.MMDD.N`）。API はまだ変わりうると README に書く | — |
 | バイナリの配布 | しない（ソースだけ） | ライブラリなので。castplay の exe は将来の検討 |
@@ -271,3 +271,7 @@ TortoiseGit で扱える（Submodule Add / Update、sdlcastg/ で右クリック
 mxv2 側で合わせたこと: BUILD.md に clone のとき submodule も取る旨（--recursive / TortoiseGit の
 Recursive、あとからなら Submodule Update）。CMake は、sdlcastg/ が空なら AUTO では組み込まず、
 ON なら「submodule を取ってきて」と止める。
+
+- 2026-09-26: 切り替え済み（mxv2 e120ff0、submodule は 76e8330「フレーム受け取りタイミングの修正」、main の上にいて本家と同じ）。Windows・Android のビルドが通った。
+
+- 2026-09-26: 文書の主を日本語に入れ替えた（README.md / BUILD.md が日本語、*.en.md が英語）。CHANGELOG に 2026.0926.1（ユーザーが Profile.ini を上げた）の項目を足した。

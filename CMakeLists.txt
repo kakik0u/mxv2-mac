@@ -176,6 +176,7 @@ set(MXV2_SOURCES
 	src/nowplaying.cpp
 	src/openintent.cpp
 	src/orientlock.cpp
+	src/outputlatency.cpp
 	src/pip.cpp
 	src/player.cpp
 	src/safaccess.cpp

@@ -6,12 +6,14 @@
 
 #include <SDL.h>
 
+#include "cast.h"
 #include "drawscreen.h"
 #include "filer.h"
 #include "fileutil.h"
 #include "mdxsong.h"
 #include "message.h"
 #include "nowplaying.h"
+#include "outputlatency.h"
 #include "player.h"
 #include "screen.h"
 #include "settings.h"
@@ -397,6 +399,41 @@ void PollUnderruns(const mxv2::Player &player, uint32_t *last, uint32_t *nextMs)
 	fflush(stdout);
 	*last = now;
 	*nextMs = ticks + kUnderrunReportMs;
+}
+
+// 出力先の遅れを測り、自動の表示の遅らせへ足す（outputlatency.h）。
+//
+// 測るのは、演奏中（一時停止していない）で「画面と音を自動的に合わせる」が
+// 入っているときだけ。手で決めた値には足さない。
+// Chromecast へ送っている間は足さない。TV へ送る絵の時刻は visualFrame から
+// 出しているので、手元の出力先の遅れを足すと絵が音より遅れて届き、
+// 書き出しで捨てられる（memo/bluetooth.md の 3。手元の音はふつう消している）。
+void PollOutputLatency(mxv2::Player *player, int *lastLoggedMs) {
+	const bool casting = mxv2::cast::GetState() != mxv2::cast::kIdle;
+	const bool want =
+	    player->playing() && !player->paused() && player->displayLatencyAuto() && !casting;
+	mxv2::outputlatency::SetActive(want, player->sampleRate());
+
+	int ms = mxv2::outputlatency::LatencyMs();
+	if (casting || !player->displayLatencyAuto()) ms = 0;
+	if (ms < 0) return;  // まだ測れていない。前の値のまま
+	// 測るたびに 1ms 前後揺れるので、5ms 以上変わったときだけ替える
+	// （替えるたびに表示が飛ぶ）。
+	const int rate = player->sampleRate();
+	const int nowMs = (int)((int64_t)player->outputLatencyFrames() * 1000 / rate);
+	if (ms == 0 ? nowMs != 0 : (ms - nowMs >= 5 || nowMs - ms >= 5)) {
+		player->SetOutputLatency((int)((int64_t)ms * rate / 1000));
+	}
+	// ログは 20ms 以上変わったときだけ（Bluetooth のつなぎ外しが分かれば十分）。
+	if (casting || !player->displayLatencyAuto()) return;
+	if (*lastLoggedMs < 0 || ms - *lastLoggedMs >= 20 || *lastLoggedMs - ms >= 20) {
+		printf("audio    : %s\n",
+		       mxv2::MsgF("Log.AudioOutputLatency", mxv2::MsgNum("%d", ms),
+		                  mxv2::MsgNum("%.1f", player->displayLatencyFrames() * 1000.0 / rate))
+		           .c_str());
+		fflush(stdout);
+		*lastLoggedMs = ms;
+	}
 }
 
 // 演奏状態の通知（Android）に出す文言をカタログから渡す。起動時と、

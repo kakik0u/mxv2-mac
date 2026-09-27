@@ -32,6 +32,7 @@
 #include "mouse.h"
 #include "nowplaying.h"
 #include "openintent.h"
+#include "outputlatency.h"
 #include "pip.h"
 #include "player.h"
 #include "safaccess.h"
@@ -802,6 +803,7 @@ int main(int argc, char **argv) {
 	// 音の途切れを知らせた回数と、次に知らせてよい時刻。
 	uint32_t underrunsSeen = 0;
 	uint32_t underrunNextMs = 0;
+	int outputLatencyLogged = -1;
 	bool endSeen = false;
 	uint64_t endFrame = 0;
 	// 演奏終了後の余韻 (1 秒)。出力レートで数えるので固定値にはできない。
@@ -1292,6 +1294,7 @@ int main(int argc, char **argv) {
 			PollSong(ctx);
 			PollNotifyRequests(ctx, &filer, &pausedByFocus);
 			PollUnderruns(player, &underrunsSeen, &underrunNextMs);
+			PollOutputLatency(&player, &outputLatencyLogged);
 			// Chromecast へは音だけ送り続ける（絵は描かないので、受信側には
 			// 最後の絵が出たまま）。受信側が終わったのはここでも拾う。
 			PollCast(&player, &pausedByFocus);
@@ -1339,6 +1342,7 @@ int main(int argc, char **argv) {
 		PollSong(ctx);
 		PollNotifyRequests(ctx, &filer, &pausedByFocus);
 		PollUnderruns(player, &underrunsSeen, &underrunNextMs);
+		PollOutputLatency(&player, &outputLatencyLogged);
 
 		// 設定 UI はここで組み立てる。配色を変えると 640x480 の
 		// オフスクリーンを作り直すので、下の描画より先に回す。
@@ -1577,6 +1581,7 @@ int main(int argc, char **argv) {
 	// ユーザーの指摘）。
 	if (mxv2::cast::GetState() != mxv2::cast::kIdle) player.Stop();
 	mxv2::cast::Shutdown();
+	mxv2::outputlatency::Shutdown();
 	ui.Shutdown();
 	textLayer.Shutdown();
 	player.Close();

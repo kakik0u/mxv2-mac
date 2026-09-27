@@ -13,8 +13,10 @@
 
 #include "settingsui_internal.h"
 
+#include "cast.h"
 #include "drawscreen.h"
 #include "filer.h"
+#include "outputlatency.h"
 #include "pip.h"
 #include "player.h"
 #include "screen.h"
@@ -546,9 +548,10 @@ void SettingsUi::BuildSettingsWindow(Settings *settings, DrawScreen *draw, Playe
 		             .c_str());
 
 		// 画面を音に合わせて遅らせる量。イベントはサンプル位置で打刻して
-		// あるので、ずれる原因はオーディオ装置のバッファぶんだけ。ふつうは
-		// 自動でよく、装置がさらに段を持っていて音が遅れて聞こえるときだけ
-		// 手で足す。
+		// あるので、ずれる原因は音が SDL へ渡ってから鳴るまでの遅れだけ。
+		// 自動では SDL のバッファ長に、測った出力先の遅れ（Bluetooth など。
+		// outputlatency.h）を足す。測れない環境や、それでも合わないときだけ
+		// 手で決める。
 		{
 			bool autoLatency = settings->latencyAuto;
 			if (ImGui::Checkbox(Msg("Settings.LatencyAuto"), &autoLatency)) {
@@ -570,6 +573,17 @@ void SettingsUi::BuildSettingsWindow(Settings *settings, DrawScreen *draw, Playe
 			              MsgNum("%+.1f", FramesToMs(player->displayLatencyFrames(), player)),
 			              MsgNum("%d", player->audioBufferFrames()))
 			             .c_str());
+			// 自動のときは、測った出力先の遅れ（Bluetooth など）も足している
+			// （outputlatency.h、playctl.cpp の PollOutputLatency）。
+			if (autoLatency && outputlatency::Available()) {
+				if (cast::GetState() != cast::kIdle) {
+					TextNote(Msg("Settings.LatencyOutputCast"));
+				} else if (player->outputLatencyFrames() > 0) {
+					TextNote(MsgF("Settings.LatencyOutput",
+					              MsgNum("%.0f", FramesToMs(player->outputLatencyFrames(), player)))
+					             .c_str());
+				}
+			}
 		}
 
 		// PDX の探索先は一覧なので、別のダイアログ [PDX の探索先] で管理する
