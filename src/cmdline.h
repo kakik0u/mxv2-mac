@@ -17,7 +17,11 @@ namespace app {
 
 // ユーザーフォルダの名前。Windows なら %APPDATA%\mxv2\ になる。
 // 設定 (mxv2.ini) と、ユーザーが足したスキンの置き場所。
+// Windows は実行ファイルの名前に合わせる（mxv2_debug.exe なら
+// %APPDATA%\mxv2_debug\。ExecutableBaseName）。kUserDirName は以前の置き場所を
+// 探すとき（LegacyUserDataDir）だけに使う。
 extern const char *const kUserDirName;
+std::string UserDirName();
 
 // アプリの名前・バージョン・ビルド日付・著作権表示（Usage の先頭と
 // バージョン情報）。

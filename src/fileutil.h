@@ -42,6 +42,13 @@ std::string JoinPath(const std::string &dir, const std::string &name);
 // 実行ファイルのあるディレクトリ（末尾に区切りを含む）。取得できなければ "./"。
 std::string ExecutableDir();
 
+// 実行ファイルの名前から拡張子を除いたもの（mxv2.exe → "mxv2"、
+// mxv2_debug.exe → "mxv2_debug"）。Windows だけ。ほかの環境と、取得できない
+// ときは "mxv2"。窓の題名・多重起動の判定・ユーザーフォルダの名前に使い、
+// 名前の違う mxv2 を別のアプリとして並べて動かせるようにする（2026-09-28、
+// ユーザーの指示。SkinEditor など mxv2 本体以外はこれまでどおり "mxv2"）。
+std::string ExecutableBaseName();
+
 // アプリごとの書き込み可能なフォルダ（末尾に区切りを含む）。
 //
 // 実行ファイルの隣は書けるとは限らない（Program Files の下、Android の apk の

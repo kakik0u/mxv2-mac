@@ -284,6 +284,27 @@ std::string ExecutableDir() {
 #endif
 }
 
+std::string ExecutableBaseName() {
+#if defined(_WIN32)
+	std::wstring buf(MAX_PATH, L'\0');
+	for (;;) {
+		DWORD n = GetModuleFileNameW(NULL, &buf[0], (DWORD)buf.size());
+		if (n == 0) return std::string("mxv2");
+		if (n < buf.size()) {
+			buf.resize(n);
+			break;
+		}
+		buf.resize(buf.size() * 2);
+	}
+	std::string name = BaseNameOf(WideToUtf8(buf));
+	const size_t dot = name.rfind('.');
+	if (dot != std::string::npos && dot > 0) name.resize(dot);
+	return name.empty() ? std::string("mxv2") : name;
+#else
+	return std::string("mxv2");
+#endif
+}
+
 std::string UserDataDir(const std::string &appName) {
 #if defined(__ANDROID__)
 	// Android のアプリ専用の置き場所は 2 つある。

@@ -186,9 +186,7 @@ bool PollSong(const PlayContext &ctx) {
 			ctx.draw->Reload();
 			ctx.draw->PutMDXTitle(r.song.title);
 			if (ctx.screen != 0) {
-				ctx.screen->SetTitle(r.song.title.empty()
-				                         ? std::string("mxv2")
-				                         : ("mxv2 - " + r.song.title));
+				ctx.screen->SetTitle(WindowTitle(r.song.title));
 			}
 
 			// 出力レートを変えたときの掛け直し。曲を掛け直すとマスクが
@@ -603,6 +601,12 @@ void PollOutputLatency(mxv2::Player *player, const mxv2::Settings &settings, int
 
 // 演奏状態の通知（Android）に出す文言をカタログから渡す。起動時と、
 // 設定ウィンドウで言語を替えたときに呼ぶ（Java 側は文言を持っていない）。
+std::string WindowTitle(const std::string &songTitle) {
+	std::string title = mxv2::ExecutableBaseName();
+	if (!songTitle.empty()) title += " - " + songTitle;
+	return title;
+}
+
 void SetNotifyLabels() {
 	mxv2::nowplaying::Labels labels;
 	labels.channel = mxv2::Msg("Notify.Channel");

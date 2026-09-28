@@ -3,9 +3,11 @@
 #include "singleinstance.h"
 
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "appprofile.h"  // CMake が Profile.ini から生成する
+#include "fileutil.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -18,17 +20,20 @@ namespace singleinstance {
 
 namespace {
 
-// 名前は AppId から作る。`Local\` はログオンセッションごとの名前空間で、
-// **別のユーザーが同時に使っていてもぶつからない**（Global\ にすると、
-// ユーザー切り替えの相手の mxv2 を見つけてしまう）。
-// デバッグ構成は別名にして、Release 版と並べて動かせるようにしておく。
-#ifdef NDEBUG
-const char kMutexName[] = "Local\\" MXV2_APP_ID_WINDOWS "-singleinstance";
-const char kIpcClassName[] = "mxv2-singleinstance-ipc";
-#else
-const char kMutexName[] = "Local\\" MXV2_APP_ID_WINDOWS ".debug-singleinstance";
-const char kIpcClassName[] = "mxv2-singleinstance-ipc-debug";
-#endif
+// 名前は AppId と実行ファイルの名前から作る。`Local\` はログオンセッション
+// ごとの名前空間で、**別のユーザーが同時に使っていてもぶつからない**
+// （Global\ にすると、ユーザー切り替えの相手の mxv2 を見つけてしまう）。
+// 実行ファイルの名前 (ExecutableBaseName) ごとに分けて、mxv2.exe と
+// mxv2_debug.exe のように名前の違うものは並べて動かせるようにしておく
+// （2026-09-28、ユーザーの指示。以前はデバッグ構成かどうかで分けていた）。
+std::string MutexName() {
+	return std::string("Local\\") + MXV2_APP_ID_WINDOWS + "." + ExecutableBaseName() +
+	       "-singleinstance";
+}
+
+std::string IpcClassName() {
+	return ExecutableBaseName() + "-singleinstance-ipc";
+}
 
 // WM_COPYDATA の合図。中身は UTF-8 の「開いてほしいもの」（空でもよい）。
 const ULONG_PTR kCopyDataId = 0x6d787632;  // 'mxv2'
@@ -72,16 +77,17 @@ LRESULT CALLBACK IpcWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 bool HandOffToExisting(const std::string &target) {
 	if (g_mutex != NULL) return false;  // 二度は呼ばない
 
-	g_mutex = CreateMutexA(NULL, FALSE, kMutexName);
+	g_mutex = CreateMutexA(NULL, FALSE, MutexName().c_str());
 	const DWORD err = GetLastError();
 	// 作れなかったら諦めて普通に起動する（起動できないより、2 つ出るほうがまし）。
 	if (g_mutex == NULL) return false;
 	if (err != ERROR_ALREADY_EXISTS) return false;  // 自分が 1 つめ
 
 	// すでに居る。受け口を探す（起動しかけならまだ無いので少し待つ）。
+	const std::string ipcClass = IpcClassName();
 	HWND peer = NULL;
 	for (int waited = 0; waited < kWaitForIpcMs; waited += kWaitStepMs) {
-		peer = FindWindowExA(HWND_MESSAGE, NULL, kIpcClassName, NULL);
+		peer = FindWindowExA(HWND_MESSAGE, NULL, ipcClass.c_str(), NULL);
 		if (peer != NULL) break;
 		Sleep(kWaitStepMs);
 	}
@@ -111,17 +117,18 @@ void Start(void *nativeWindowHandle) {
 	if (g_mutex == NULL) return;      // 唯一のインスタンスではない（-multi など）
 	if (g_ipcWindow != NULL) return;  // 二度は作らない
 
+	static const std::string ipcClass = IpcClassName();  // 登録した名前を生かしておく
 	WNDCLASSA wc;
 	memset(&wc, 0, sizeof(wc));
 	wc.lpfnWndProc = IpcWndProc;
 	wc.hInstance = GetModuleHandleA(NULL);
-	wc.lpszClassName = kIpcClassName;
+	wc.lpszClassName = ipcClass.c_str();
 	RegisterClassA(&wc);  // 2 度目は失敗するが、それで構わない
 
 	// **メッセージ専用ウィンドウ**（HWND_MESSAGE の子）。画面には出ず、
 	// タスクバーにも並ばない。SDL と同じスレッドに作るので、届いた
 	// メッセージは SDL_PumpEvents の PeekMessage が運んでくる。
-	g_ipcWindow = CreateWindowExA(0, kIpcClassName, "", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL,
+	g_ipcWindow = CreateWindowExA(0, ipcClass.c_str(), "", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL,
 	                              wc.hInstance, NULL);
 }
 

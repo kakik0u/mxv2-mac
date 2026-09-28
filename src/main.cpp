@@ -276,7 +276,7 @@ int main(int argc, char **argv) {
 	paths.bundledDir = opt.assetsDir.empty()
 	                       ? mxv2::JoinPath(mxv2::ExecutableDir(), "assets")
 	                       : opt.assetsDir;
-	paths.userDir = opt.userDir.empty() ? mxv2::UserDataDir(kUserDirName) : opt.userDir;
+	paths.userDir = opt.userDir.empty() ? mxv2::UserDataDir(UserDirName()) : opt.userDir;
 
 #ifdef __ANDROID__
 	// apk の assets は fopen で開けないので、まず内部ストレージへ展開して
@@ -603,7 +603,7 @@ int main(int argc, char **argv) {
 
 	{
 		std::string err;
-		if (!screen.Open("mxv2", skin.screenW, skin.screenH, settings.zoomPercent, &err)) {
+		if (!screen.Open(WindowTitle(std::string()), skin.screenW, skin.screenH, settings.zoomPercent, &err)) {
 			printf("ERROR: %s\n", err.c_str());
 			SDL_Quit();
 			return EXIT_FAILURE;

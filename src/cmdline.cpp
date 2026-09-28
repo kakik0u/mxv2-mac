@@ -18,6 +18,7 @@
 #endif
 
 #include "appprofile.h"  // CMake が Profile.ini から生成する
+#include "fileutil.h"
 #include "message.h"
 #include "player.h"
 #include "settings.h"
@@ -28,6 +29,10 @@ namespace app {
 // ユーザーフォルダの名前。Windows なら %APPDATA%\mxv2\ になる。
 // 設定 (mxv2.ini) と、ユーザーが足したスキンの置き場所。
 const char *const kUserDirName = "mxv2";
+
+std::string UserDirName() {
+	return mxv2::ExecutableBaseName();
+}
 
 namespace {
 
