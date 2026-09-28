@@ -16,6 +16,8 @@
 #ifndef MXV2_OUTPUTLATENCY_H
 #define MXV2_OUTPUTLATENCY_H
 
+#include <string>
+
 namespace mxv2 {
 namespace outputlatency {
 
@@ -30,13 +32,23 @@ void SetActive(bool active, int sampleRate);
 // 最後に測った遅れ（ミリ秒）。まだ測れていなければ -1。
 int LatencyMs();
 
-// 測った値に Bluetooth のぶんが入っているか。Android は入る（AAudio の時刻は
-// 受け側の遅れまで含む）。**Windows は入らない**（WASAPI は BT525 FM でも
-// 有線とほぼ同じ 42ms を返した。実際は 120ms 余り。memo/bluetooth.md）。
-bool MeasuresBluetooth();
-
-// いま測っている出力先が Bluetooth か（Windows だけ。ほかは常に false）。
+// いまの出力先が Bluetooth か。**メインスレッドから呼ぶこと**（Android は JNI、
+// Windows は COM）。どちらも 1 秒ごとに引き直す。演奏していなくても分かる。
+//   Android: メディアの音の行き先（net.gorry.mxv2.AudioRouteBridge）。
+//   Windows: 既定の出力の親が Bluetooth の機器か。
+// どちらも、測った遅れには受け側の中の遅れ（AV アンプの処理など）が入らない。
+// Windows は Bluetooth の遅れそのものも入らない（WASAPI は BT525 FM でも有線と
+// ほぼ同じ 42ms を返した。memo/bluetooth.md）。そのぶんは機器ごとに手で足す
+// （設定の [Bluetooth] の遅延時間。playctl.cpp の PollOutputLatency）。
 bool OutputIsBluetooth();
+
+// 出力先の Bluetooth 機器の名前（UTF-8）。Bluetooth でなければ空。
+// 遅延時間を機器ごとに覚える鍵にする。メインスレッドから呼ぶこと。
+std::string BluetoothName();
+
+// 次の BluetoothName で必ず引き直させる（Bluetooth の機器がつながった直後など、
+// 1 秒前の答えでは困るとき）。
+void RefreshBluetoothName();
 
 // 終わるとき。作業スレッドを止める。
 void Shutdown();

@@ -15,6 +15,7 @@
 
 #include "drawscreen.h"
 #include "filer.h"
+#include "nowplaying.h"
 #include "outputlatency.h"
 #include "pip.h"
 #include "player.h"
@@ -552,8 +553,18 @@ void SettingsUi::BuildSettingsWindow(Settings *settings, DrawScreen *draw, Playe
 		// outputlatency.h）を足す。測れない環境や、それでも合わないときだけ
 		// 手で決める。
 		{
+			// 自動で決まっている遅らせ (ms)。自動のあいだはスライダーにこれを出し、
+			// 自動を切ったらここから手で調整を始める（切った瞬間に表示が飛ばない
+			// ように。以前の手動の値は上書きする。2026-09-28、ユーザーの指示）。
+			// 淡色のスライダーに使われていない手動の値が見えていると、効いている
+			// ように読めてしまうので。
+			int autoMs = (int)(FramesToMs(player->displayLatencyFrames(), player) + 0.5f);
+			if (autoMs < Settings::kLatencyMsMin) autoMs = Settings::kLatencyMsMin;
+			if (autoMs > Settings::kLatencyMsMax) autoMs = Settings::kLatencyMsMax;
+
 			bool autoLatency = settings->latencyAuto;
 			if (ImGui::Checkbox(Msg("Settings.LatencyAuto"), &autoLatency)) {
+				if (!autoLatency && settings->latencyAuto) settings->latencyMs = autoMs;
 				settings->latencyAuto = autoLatency;
 				changedFields_ |= Settings::kFieldLatency;
 				player->SetDisplayLatency(autoLatency,
@@ -562,53 +573,59 @@ void SettingsUi::BuildSettingsWindow(Settings *settings, DrawScreen *draw, Playe
 			// 行は自動の入り切りや出力先で出したり消したりしない（下の行が
 			// 上下に動くので。2026-09-27、ユーザーの指示）。使わないものは
 			// 淡色にし、注記も中身が無いときは空の行で高さを保つ。
+			// スライダーは [画面の遅れ] ダイアログにあり、ここは今の値と [設定…] だけ
+			// （2026-09-28、ユーザーの指示）。
 			ImGui::BeginDisabled(autoLatency);
 			{
-				int ms = settings->latencyMs;
-				if (ImGui::SliderInt(Msg("Settings.Latency"), &ms, Settings::kLatencyMsMin,
-				                     Settings::kLatencyMsMax, "%+d")) {
-					settings->latencyMs = ms;
-					changedFields_ |= Settings::kFieldLatency;
-					player->SetDisplayLatency(false, MsToFrames(ms, player));
+				const int ms = autoLatency ? autoMs : settings->latencyMs;
+				// 後ろの [設定…] ボタンと文字の並びを揃える。
+				ImGui::AlignTextToFramePadding();
+				ImGui::TextUnformatted(Msg("Settings.Latency"));
+				ImGui::SameLine();
+				ImGui::TextDisabled("%s",
+				                    MsgF("Settings.LatencyValue", MsgNum("%+d", ms)).c_str());
+				ImGui::SameLine();
+				if (ImGui::Button(L("Button.Setup", "##displaylatency").c_str())) {
+					OpenLatencyWindow(kLatencyTargetDisplay, std::string());
 				}
 			}
 			ImGui::EndDisabled();
-			TextNote(MsgF("Settings.LatencyNow",
-			              MsgNum("%+.1f", FramesToMs(player->displayLatencyFrames(), player)),
-			              MsgNum("%d", player->audioBufferFrames()))
-			             .c_str());
-			// 自動のときは、測った出力先の遅れ（Bluetooth など）も足している
-			// （outputlatency.h、playctl.cpp の PollOutputLatency）。
-			if (outputlatency::Available()) {
-				// Bluetooth のぶんを測れない環境（Windows）だけ、手で足す値を出す。
-				if (!outputlatency::MeasuresBluetooth()) {
-					ImGui::BeginDisabled(!autoLatency);
-					int bt = settings->bluetoothLatencyMs;
-					if (ImGui::SliderInt(Msg("Settings.LatencyBluetooth"), &bt, 0,
-					                     Settings::kBluetoothLatencyMsMax, "%d")) {
-						settings->bluetoothLatencyMs = bt;
-						changedFields_ |= Settings::kFieldLatency;
+			// いまの遅らせを「合計 ＝ 内訳」の 1 行で見せる（2026-09-28、ユーザーの
+			// 指示。以前は「いま」と「出力先の遅れ」の 2 行で、合計と内訳の関係が
+			// 読み取りにくかった）。自動では SDL のバッファ長に、測った出力先の
+			// 遅れ（outputlatency.h、playctl.cpp の PollOutputLatency）を足している。
+			// Windows で出力先が Bluetooth なら、そこへ手で足した遅延時間（[Bluetooth]
+			// のグループ）も分けて見せる（全部を測ったように読めるので）。
+			// キャスト中やまだ測れていないときは、出力先のぶんは 0 なので出さない。
+			{
+				const std::string total =
+				    MsgNum(autoLatency ? "%.1f" : "%+.1f",
+				           FramesToMs(player->displayLatencyFrames(), player));
+				// 区切りの前後の空白は ini では書けない（値の前後は削られる）のでここで足す。
+				const std::string join = std::string(" ") + Msg("Settings.LatencyPartJoin") + " ";
+				std::string note;
+				if (!autoLatency) {
+					note = MsgF("Settings.LatencyManual", total);
+				} else {
+					std::string parts = MsgF("Settings.LatencyPartBuffer",
+					                         MsgNum("%.1f", FramesToMs(player->audioBufferFrames(),
+					                                                   player)));
+					const int outputMs =
+					    (int)(FramesToMs(player->outputLatencyFrames(), player) + 0.5f);
+					if (outputMs > 0) {
+						int btMs = 0;
+						if (outputlatency::OutputIsBluetooth()) {
+							btMs = settings->BluetoothLatencyFor(outputlatency::BluetoothName());
+							if (btMs >= outputMs) btMs = 0;  // まだ足す前
+						}
+						parts += join;
+						parts += MsgF("Settings.LatencyPartOutput", MsgNum("%d", outputMs - btMs));
+						if (btMs > 0) {
+							parts += join;
+							parts += MsgF("Settings.LatencyPartBluetooth", MsgNum("%d", btMs));
+						}
 					}
-					ImGui::EndDisabled();
-					TextNote(outputlatency::OutputIsBluetooth() ? Msg("Settings.LatencyBluetoothNow")
-					                                            : " ");
-				}
-				// キャスト中や手で決めているときは足さない（PollOutputLatency）ので、
-				// 空の行になる。
-				std::string note = " ";
-				if (autoLatency && player->outputLatencyFrames() > 0) {
-					const std::string total =
-					    MsgNum("%.0f", FramesToMs(player->outputLatencyFrames(), player));
-					// Bluetooth 遅延量を足しているときは、測った値と足した値を分けて見せる
-					// （全部を測ったように読めるので）。
-					if (!outputlatency::MeasuresBluetooth() && outputlatency::OutputIsBluetooth() &&
-					    outputlatency::LatencyMs() >= 0) {
-						note = MsgF("Settings.LatencyOutputBluetooth", total,
-						            MsgNum("%d", outputlatency::LatencyMs()),
-						            MsgNum("%d", settings->bluetoothLatencyMs));
-					} else {
-						note = MsgF("Settings.LatencyOutput", total);
-					}
+					note = MsgF("Settings.LatencyTotal", total, parts);
 				}
 				TextNote(note.c_str());
 			}
@@ -619,6 +636,8 @@ void SettingsUi::BuildSettingsWindow(Settings *settings, DrawScreen *draw, Playe
 		// 1 本だけを打ち込み欄と [参照…] で指定していた）。ここは件数と [編集…]
 		// だけ。モーダル同士は入れ子にせず、設定ウィンドウを閉じてから開き、
 		// 閉じたらまた開く（Build() の pdxOpenPending_ / pdxReturnToSettings_）。
+		// 後ろの [編集…] ボタンと文字の並びを揃える。
+		ImGui::AlignTextToFramePadding();
 		ImGui::TextUnformatted(Msg("Settings.PdxPath"));
 		ImGui::SameLine();
 		ImGui::TextDisabled("%s", MsgF("Settings.PdxPathCount",
@@ -633,6 +652,63 @@ void SettingsUi::BuildSettingsWindow(Settings *settings, DrawScreen *draw, Playe
 			visible_ = false;
 		}
 		GroupTrailingSpace();
+	}
+
+	// ---- Bluetooth（機器名） ---------------------------------------------
+	// 車・AV アンプなど Bluetooth の相手に関わるもの。**どれも機器ごとに覚え、
+	// いまつないでいる機器のものだけを出す**。つないでいなければグループごと
+	// 出さない（2026-09-28、ユーザーの指示）。見出しに機器名を入れるので、
+	// 開き閉じの状態は "###" 以降の ID で機器をまたいで保つ。
+	{
+		// 出力先の遅れを測れる環境（Android・Windows）で、機器ごとに手で足す遅れ。
+		const bool btLatency = outputlatency::Available();
+		// 曲の情報を渡す相手（MediaSession）が居る環境（Android）だけ。
+		const bool btSession = nowplaying::Available();
+		const std::string name = (btLatency || btSession) ? outputlatency::BluetoothName()
+		                                                   : std::string();
+		const std::string header = MsgF("Settings.BluetoothDevice", name) + "###Bluetooth";
+		if (!name.empty() && GroupHeader(header.c_str())) {
+			Settings::BtDevice device = settings->BluetoothDeviceFor(name);
+			bool changed = false;
+			if (btSession) {
+				changed |= ImGui::Checkbox(Msg("Settings.BtSwapArtistAlbum"),
+				                           &device.swapArtistAlbum);
+				// いまどちらの欄に何を出しているか。
+				const char *folder = Msg("Settings.BtFolderName");
+				const char *file = Msg("Settings.BtFileName");
+				const bool swap = device.swapArtistAlbum;
+				TextNote(MsgF("Settings.BtSwapArtistAlbumNote", swap ? file : folder,
+				              swap ? folder : file)
+				             .c_str());
+
+				// 車のエンジンを切るなどで Bluetooth が切れると一時停止する
+				// (BECOMING_NOISY)。この機器がつながり直したときにその一時停止を解くか。
+				changed |= ImGui::Checkbox(Msg("Settings.BtResumeOnReconnect"),
+				                           &device.resumeOnReconnect);
+				TextNote(Msg("Settings.BtResumeOnReconnectNote"));
+			}
+			if (btLatency) {
+				// 足すのは [演奏] の「画面と音を自動的に合わせる」のときだけなので、
+				// 切っているときは淡色。スライダーは [遅延時間] ダイアログにある。
+				ImGui::BeginDisabled(!settings->latencyAuto);
+				// 後ろの [設定…] ボタンと文字の並びを揃える。
+				ImGui::AlignTextToFramePadding();
+				ImGui::TextUnformatted(Msg("Settings.LatencyBluetooth"));
+				ImGui::SameLine();
+				ImGui::TextDisabled(
+				    "%s", MsgF("Settings.LatencyValue", MsgNum("%d", device.latencyMs)).c_str());
+				ImGui::SameLine();
+				if (ImGui::Button(L("Button.Setup", "##btlatency").c_str())) {
+					OpenLatencyWindow(kLatencyTargetBluetooth, name);
+				}
+				ImGui::EndDisabled();
+			}
+			if (changed) {
+				settings->SetBluetoothDevice(device);
+				changedFields_ |= Settings::kFieldBluetooth;
+			}
+			GroupTrailingSpace();
+		}
 	}
 
 	// ---- 動作 ----------------------------------------------------------
@@ -659,6 +735,136 @@ void SettingsUi::BuildSettingsWindow(Settings *settings, DrawScreen *draw, Playe
 	// 作法に合わせてある。デスクトップでも不自然ではないという判断）。
 	ImGui::PopItemWidth();
 	DragToScroll(&dragScroll_, &dragMoved_, true, false);
+	ImGui::EndPopup();
+}
+
+// ---------------------------------------------------------------------------
+// [画面の遅れ] / [遅延時間] ダイアログ
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// 次のダイアログを、ファイラーの側へ寄せて置く。鍵盤（ファイラー以外の側）を
+// 見ながら値を動かせるように。ファイラーの矩形の中央に置き、はみ出すほど
+// 大きければ画面の端（ファイラーの外側の辺）へ寄せる。
+void PlaceNextWindowNearFiler(const DrawScreen *draw, const Screen *screen, ImGuiCond cond) {
+	const Skin &l = draw->layout();
+	const SDL_Rect cr = screen->CanvasRect();
+	const float sx = (float)cr.w / (float)draw->width();
+	const float sy = (float)cr.h / (float)draw->height();
+	// ファイラーの矩形（一覧とスクロールバーを合わせたもの）を出力の座標へ。
+	const float fx = cr.x + (float)l.fileListX * sx;
+	const float fy = cr.y + (float)l.fileListY * sy;
+	const float fw = (float)(l.fileListW + l.scrollW) * sx;
+	const float fh = (float)l.fileListH * sy;
+	ImVec2 pos(fx + fw * 0.5f, fy + fh * 0.5f);
+	ImVec2 pivot(0.5f, 0.5f);
+	switch (l.filerSide) {
+		case kFilerSideTop:
+			pos.y = (float)cr.y;
+			pivot.y = 0.0f;
+			break;
+		case kFilerSideLeft:
+			pos.x = (float)cr.x;
+			pivot.x = 0.0f;
+			break;
+		case kFilerSideRight:
+			pos.x = (float)(cr.x + cr.w);
+			pivot.x = 1.0f;
+			break;
+		case kFilerSideBottom:
+		default:
+			pos.y = (float)(cr.y + cr.h);
+			pivot.y = 1.0f;
+			break;
+	}
+	ImGui::SetNextWindowPos(pos, cond, pivot);
+}
+
+// ms を「秒」と「ミリ秒」の 2 本のスライダーの値へ。負は秒 0 のミリ秒側へ入れる
+// （手動の画面の遅れだけが負を取る。Settings::kLatencyMsMin）。
+void SplitLatency(int ms, int *sec, int *milli) {
+	if (ms < 0) {
+		*sec = 0;
+		*milli = ms;
+	} else {
+		*sec = ms / 1000;
+		*milli = ms % 1000;
+	}
+}
+
+}  // namespace
+
+const char *SettingsUi::LatencyTitle() const {
+	return (latencyTarget_ == kLatencyTargetBluetooth) ? kBtLatencyTitle : kDisplayLatencyTitle;
+}
+
+void SettingsUi::OpenLatencyWindow(int target, const std::string &device) {
+	latencyTarget_ = target;
+	latencyDevice_ = device;
+	latencyOpenPending_ = true;
+	latencyReturnToSettings_ = true;
+	visible_ = false;
+}
+
+void SettingsUi::BuildLatencyWindow(Settings *settings, DrawScreen *draw, Player *player,
+                                    Screen *screen) {
+	const char *title = LatencyTitle();
+	if (!SyncModal(title, &showLatency_)) return;
+
+	PlaceNextWindowNearFiler(draw, screen, placeCond());
+	ImGui::SetNextWindowSize(DialogSize(360.0f, 0.0f), placeCond());
+	if (!ImGui::BeginPopupModal(title, &showLatency_,
+	                            DialogFlags() | ImGuiWindowFlags_AlwaysAutoResize)) {
+		return;
+	}
+
+	const bool bluetooth = (latencyTarget_ == kLatencyTargetBluetooth);
+	Settings::BtDevice device;
+	int ms = 0;
+	int minMs = 0;
+	int maxMs = 0;
+	if (bluetooth) {
+		device = settings->BluetoothDeviceFor(latencyDevice_);
+		ms = device.latencyMs;
+		maxMs = Settings::kBluetoothLatencyMsMax;
+		TextNote(MsgF("Settings.LatencyDialogDevice", latencyDevice_).c_str());
+	} else {
+		ms = settings->latencyMs;
+		minMs = Settings::kLatencyMsMin;
+		maxMs = Settings::kLatencyMsMax;
+	}
+
+	int sec = 0;
+	int milli = 0;
+	SplitLatency(ms, &sec, &milli);
+	bool changed = false;
+	ImGui::SetNextItemWidth(-ImGui::CalcTextSize(Msg("Settings.LatencyMillis")).x -
+	                        ImGui::GetStyle().ItemInnerSpacing.x);
+	changed |= ImGui::SliderInt(Msg("Settings.LatencySeconds"), &sec, 0, maxMs / 1000, "%d");
+	ImGui::SetNextItemWidth(-ImGui::CalcTextSize(Msg("Settings.LatencyMillis")).x -
+	                        ImGui::GetStyle().ItemInnerSpacing.x);
+	changed |= ImGui::SliderInt(Msg("Settings.LatencyMillis"), &milli, (minMs < 0) ? minMs : 0,
+	                            999, "%d");
+	if (changed) {
+		ms = sec * 1000 + milli;
+		if (ms < minMs) ms = minMs;
+		if (ms > maxMs) ms = maxMs;
+		if (bluetooth) {
+			device.latencyMs = ms;
+			settings->SetBluetoothDevice(device);
+			changedFields_ |= Settings::kFieldBluetooth;
+		} else {
+			settings->latencyMs = ms;
+			changedFields_ |= Settings::kFieldLatency;
+			player->SetDisplayLatency(false, MsToFrames(ms, player));
+		}
+	}
+	TextNote(MsgF("Settings.LatencyDialogTotal", MsgNum(bluetooth ? "%d" : "%+d", ms)).c_str());
+	TextNote(Msg("Settings.LatencyDialogHint"));
+
+	if (ImGui::Button(Msg("Button.Close"), ImVec2(-FLT_MIN, 0.0f))) showLatency_ = false;
+
 	ImGui::EndPopup();
 }
 

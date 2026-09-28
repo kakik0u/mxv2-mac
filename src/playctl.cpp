@@ -34,8 +34,18 @@ const uint32_t kUnderrunReportMs = 5000;
 // 機器もあるので、キーボードの , . (3 秒) より大きめ、< > (30 秒) より小さめ。
 const uint32_t kRemoteSeekStepMs = 10 * 1000;
 
-// アーティスト欄に載せるフォルダの長さの上限（文字数）。
-const size_t kArtistMaxChars = 32;
+// アルバム欄に載せるフォルダの長さの上限（文字数）。
+const size_t kAlbumMaxChars = 32;
+
+// 通知に出す曲番号の控え。曲が替わったときに一覧から引き、見つかったら
+// その曲の間は持ち続ける（ファイラーで別のフォルダへ移っても消さない。
+// 車の画面の表示が途中で変わると、曲が替わったように見える相手がいる）。
+struct TrackNumberMemo {
+	std::string path;
+	int number;
+	int count;
+};
+TrackNumberMemo g_trackMemo = { std::string(), 0, 0 };
 
 // UTF-8 の文字数。
 size_t Utf8Length(const std::string &s) {
@@ -46,8 +56,8 @@ size_t Utf8Length(const std::string &s) {
 	return n;
 }
 
-// MediaSession のアーティスト欄（車や AV アンプの画面）に出す名前。
-// 曲のあるフォルダから、kArtistMaxChars 文字を超えない範囲で親フォルダを
+// MediaSession のアルバム欄（車や AV アンプの画面）に出す名前。
+// 曲のあるフォルダから、kAlbumMaxChars 文字を超えない範囲で親フォルダを
 // 遡って "/" でつなぐ（2026-09-27、ユーザーの指示）。"a/b/c/d.mdx" なら
 // "a/b/c" が収まれば全部、超えれば a、b の順に削る。c だけで超えるときは
 // c だけをそのまま使う。
@@ -83,7 +93,7 @@ std::string FolderNameOf(const std::string &ref) {
 			continue;
 		}
 		const std::string next = name + "/" + out;
-		if (Utf8Length(next) > kArtistMaxChars) break;
+		if (Utf8Length(next) > kAlbumMaxChars) break;
 		out = next;
 	}
 	return out;
@@ -361,8 +371,9 @@ void PollSongEnd(const PlayContext &ctx, mxv2::Filer *filer, uint64_t frame,
 
 // 演奏状態の通知（Android）。画面を見ていないときの唯一の窓口になるので、
 // バックグラウンドでも毎回呼ぶ。中身が変わらなければ何も起きない。
-void UpdateNowPlaying(const mxv2::Player &player, const std::string &currentPath, bool playing,
-                      bool autoNext, bool autoRepeat) {
+void UpdateNowPlaying(const mxv2::Player &player, const mxv2::Filer &filer,
+                      const std::string &currentPath, bool playing, bool autoNext,
+                      bool autoRepeat, const mxv2::Settings &settings) {
 	// Windows などでは何もしない。文言を組み立てる前に抜ける。
 	if (!mxv2::nowplaying::Available()) return;
 
@@ -387,7 +398,27 @@ void UpdateNowPlaying(const mxv2::Player &player, const std::string &currentPath
 			st.text += mxv2::Msg("Notify.Repeat");
 		}
 
-		st.artist = FolderNameOf(currentPath);
+		st.artist = mxv2::BaseNameOf(currentPath);
+		st.album = FolderNameOf(currentPath);
+		// 設定 [Bluetooth（機器名）] の「アルバム名とアーティスト名を入れ替える」。
+		// アルバム欄を出さない相手でもフォルダ名を見せたいとき。機器ごとに覚えて
+		// いるので、いまつないでいる機器のものを使う（Bluetooth でなければ入れ替えない）。
+		const std::string btName = mxv2::outputlatency::BluetoothName();
+		if (!btName.empty() && settings.BluetoothDeviceFor(btName).swapArtistAlbum) {
+			st.artist.swap(st.album);
+		}
+
+		if (g_trackMemo.path != currentPath) {
+			g_trackMemo.path = currentPath;
+			g_trackMemo.number = 0;
+			g_trackMemo.count = 0;
+		}
+		// 読み込み中などで引けなければ、次のフレームで引き直す。
+		if (g_trackMemo.number == 0) {
+			filer.MdxNumberOf(currentPath, &g_trackMemo.number, &g_trackMemo.count);
+		}
+		st.trackNumber = g_trackMemo.number;
+		st.trackCount = g_trackMemo.count;
 
 		st.posMs = player.nowTimeMs();
 		st.durMs = player.playTimeMs();
@@ -398,10 +429,11 @@ void UpdateNowPlaying(const mxv2::Player &player, const std::string &currentPath
 // 通知（Android）のボタンや、他のアプリ・ヘッドホンの都合で届いた要求。
 // 画面を見ていないときの唯一の操作手段なので、**バックグラウンドでも回す**。
 //
-// pausedByFocus は「他のアプリに音を譲って止めた」印。返してもらったときに
-// 自動で再開するのはこの印が立っているときだけで、自分で止めていた曲を
-// 勝手に鳴らし始めることはない。
-void PollNotifyRequests(const PlayContext &ctx, mxv2::Filer *filer, bool *pausedByFocus) {
+// autoPause は「他のアプリに音を譲って止めた」「出力先が外れて止めた」の印。
+// 都合が解けたときに自動で再開するのはこの印が立っているときだけで、自分で
+// 止めていた曲を勝手に鳴らし始めることはない。
+void PollNotifyRequests(const PlayContext &ctx, mxv2::Filer *filer, AutoPause *autoPause,
+                        const mxv2::Settings &settings) {
 	mxv2::Player *player = ctx.player;
 	for (;;) {
 		const mxv2::nowplaying::Request req = mxv2::nowplaying::TakeRequest();
@@ -410,7 +442,7 @@ void PollNotifyRequests(const PlayContext &ctx, mxv2::Filer *filer, bool *paused
 		std::string path;
 		switch (req) {
 			case mxv2::nowplaying::kRequestPlay:
-				*pausedByFocus = false;
+				*autoPause = kAutoPauseNone;
 				if (player->playing()) {
 					if (player->paused()) player->Resume();
 					break;
@@ -431,7 +463,7 @@ void PollNotifyRequests(const PlayContext &ctx, mxv2::Filer *filer, bool *paused
 				}
 				break;
 			case mxv2::nowplaying::kRequestPause:
-				*pausedByFocus = false;
+				*autoPause = kAutoPauseNone;
 				if (!player->paused()) player->Pause();
 				break;
 			case mxv2::nowplaying::kRequestPrev:
@@ -467,18 +499,33 @@ void PollNotifyRequests(const PlayContext &ctx, mxv2::Filer *filer, bool *paused
 				break;
 			}
 			case mxv2::nowplaying::kRequestFocusLost:
+			case mxv2::nowplaying::kRequestRouteLost:
 				// 鳴っていたときだけ印を付ける。
 				if (player->playing() && !player->paused()) {
 					player->Pause();
-					*pausedByFocus = true;
+					*autoPause = (req == mxv2::nowplaying::kRequestFocusLost) ? kAutoPauseFocus
+					                                                         : kAutoPauseRoute;
 				}
 				break;
 			case mxv2::nowplaying::kRequestFocusGained:
-				if (*pausedByFocus) {
-					*pausedByFocus = false;
-					player->Resume();
+				if (*autoPause == kAutoPauseFocus) {
+					*autoPause = kAutoPauseNone;
+					if (player->playing() && player->paused()) player->Resume();
 				}
 				break;
+			// 車のエンジンを掛け直したときなど（memo/bluetooth.md）。止めたあとで
+			// 画面から鳴らし直していれば、一時停止していないので何もしない。
+			// 再開するかは、つながった機器の設定で決める（機器ごと）。1 秒ごとに
+			// 引き直している機器名は古いかもしれないので、ここで引き直す。
+			case mxv2::nowplaying::kRequestBluetoothConnected: {
+				if (*autoPause != kAutoPauseRoute) break;
+				mxv2::outputlatency::RefreshBluetoothName();
+				const std::string name = mxv2::outputlatency::BluetoothName();
+				if (name.empty() || !settings.BluetoothDeviceFor(name).resumeOnReconnect) break;
+				*autoPause = kAutoPauseNone;
+				if (player->playing() && player->paused()) player->Resume();
+				break;
+			}
 			default:
 				break;
 		}
@@ -510,8 +557,9 @@ void PollUnderruns(const mxv2::Player &player, uint32_t *last, uint32_t *nextMs)
 // 出しているので、手元の出力先の遅れを足すと絵が音より遅れて届き、
 // 書き出しで捨てられる（memo/bluetooth.md の 3。手元の音はふつう消している）。
 //
-// Windows は Bluetooth のぶんを測れないので、出力先が Bluetooth のときは
-// 設定の値 (bluetoothLatencyMs) を足す。
+// 出力先が Bluetooth のときは、その機器の遅延時間（設定の [Bluetooth]。
+// Settings::BluetoothLatencyFor）を足す。測った遅れには受け側の中の遅れが
+// 入らず、Windows は Bluetooth の遅れそのものも入らないので。
 void PollOutputLatency(mxv2::Player *player, const mxv2::Settings &settings, int *lastLoggedMs) {
 	const bool casting = mxv2::cast::GetState() != mxv2::cast::kIdle;
 	const bool want =
@@ -521,9 +569,18 @@ void PollOutputLatency(mxv2::Player *player, const mxv2::Settings &settings, int
 	int ms = mxv2::outputlatency::LatencyMs();
 	if (casting || !player->displayLatencyAuto()) ms = 0;
 	if (ms < 0) return;  // まだ測れていない。前の値のまま
-	if (ms > 0 && mxv2::outputlatency::OutputIsBluetooth() &&
-	    !mxv2::outputlatency::MeasuresBluetooth()) {
-		ms += settings.bluetoothLatencyMs;
+	if (ms > 0 && mxv2::outputlatency::OutputIsBluetooth()) {
+		const std::string name = mxv2::outputlatency::BluetoothName();
+		const int btMs = settings.BluetoothLatencyFor(name);
+		ms += btMs;
+		// どの機器の値を足したかは、つなぎ替えたときだけログに出す。
+		static std::string lastName;
+		if (name != lastName) {
+			printf("audio    : %s\n",
+			       mxv2::MsgF("Log.AudioBluetoothDevice", name, mxv2::MsgNum("%d", btMs)).c_str());
+			fflush(stdout);
+			lastName = name;
+		}
 	}
 	// 測るたびに 1ms 前後揺れるので、5ms 以上変わったときだけ替える
 	// （替えるたびに表示が飛ぶ）。

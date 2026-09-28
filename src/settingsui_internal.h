@@ -88,6 +88,8 @@ extern const char *kQuitTitle;
 extern const char *kHandedTitle;
 extern const char *kUpdateTitle;
 extern const char *kCastTitle;
+extern const char *kDisplayLatencyTitle;
+extern const char *kBtLatencyTitle;
 
 // 題名を作る（1 度だけ）／言語を替えたあとに取り直す。
 void InitTitles();

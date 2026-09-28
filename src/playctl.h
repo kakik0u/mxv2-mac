@@ -94,11 +94,21 @@ void OpenDropped(const PlayContext &ctx, mxv2::Filer *filer, const std::string &
 void PollSongEnd(const PlayContext &ctx, mxv2::Filer *filer, uint64_t frame,
                  uint64_t lingerFrames, bool autoNext, bool autoRepeat, bool quitWhenDone,
                  uint64_t *endFrame, bool *quit);
-// 演奏状態の通知（Android）を更新する。
-void UpdateNowPlaying(const mxv2::Player &player, const std::string &currentPath, bool playing,
-                      bool autoNext, bool autoRepeat);
+// 演奏状態の通知（Android）を更新する。settings からは、いまつないでいる
+// Bluetooth の機器の「アルバム名とアーティスト名を入れ替える」を見る。
+void UpdateNowPlaying(const mxv2::Player &player, const mxv2::Filer &filer,
+                      const std::string &currentPath, bool playing, bool autoNext,
+                      bool autoRepeat, const mxv2::Settings &settings);
+// 何の都合で自動的に一時停止したか。都合が解けたときに再開してよいかの印。
+enum AutoPause {
+	kAutoPauseNone = 0,
+	kAutoPauseFocus,  // 他のアプリに音を譲った。返してもらったら再開する
+	kAutoPauseRoute,  // 出力先が外れた。設定によっては Bluetooth の再接続で再開する
+};
 // 通知のボタンや、他のアプリ・ヘッドホンの都合で届いた要求を処理する。
-void PollNotifyRequests(const PlayContext &ctx, mxv2::Filer *filer, bool *pausedByFocus);
+// settings からは、つながった Bluetooth の機器の「再接続で一時停止を解除する」を見る。
+void PollNotifyRequests(const PlayContext &ctx, mxv2::Filer *filer, AutoPause *autoPause,
+                        const mxv2::Settings &settings);
 // 音が途切れたことをときどきログに出す。
 void PollUnderruns(const mxv2::Player &player, uint32_t *last, uint32_t *nextMs);
 // 出力先の遅れ（Bluetooth など）を測り、自動の表示の遅らせへ足す。

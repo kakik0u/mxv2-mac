@@ -801,4 +801,19 @@ bool Filer::PrevMdx(std::string *playPath) {
 	return false;
 }
 
+bool Filer::MdxNumberOf(const std::string &ref, int *number, int *count) const {
+	if (loading_) return false;
+	int n = 0;
+	int found = 0;
+	for (size_t i = 0; i < items_.size(); i++) {
+		if (!(items_[i].type & kFileItemMdx)) continue;
+		n++;
+		if (found == 0 && items_[i].path == ref) found = n;
+	}
+	if (found == 0) return false;
+	*number = found;
+	*count = n;
+	return true;
+}
+
 }  // namespace mxv2

@@ -45,11 +45,15 @@ struct Shown {
 	std::string title;
 	std::string text;
 	std::string artist;
+	std::string album;
+	int trackNumber;
+	int trackCount;
 	uint32_t posMs;    // 最後に渡した演奏位置
 	uint32_t atTicks;  // それを渡した時刻 (SDL_GetTicks)
 };
 
-Shown g_shown = { false, false, false, std::string(), std::string(), std::string(), 0, 0 };
+Shown g_shown = { false, false, false, std::string(), std::string(), std::string(),
+                  std::string(), 0, 0, 0, 0 };
 
 // 演奏位置が「そのまま進んだ場合」からこれだけ外れたら出し直す (ms)。
 // ロック画面のシークバーは渡した位置から自分で進むので、ふだんは放って
@@ -85,7 +89,8 @@ bool EnsureJni() {
 	    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
 	    "Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
 	g.update = env->GetStaticMethodID(
-	    g.cls, "update", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJJ)V");
+	    g.cls, "update",
+	    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IIZJJ)V");
 	g.shutdown = env->GetStaticMethodID(g.cls, "shutdown", "()V");
 	g.takeRequest = env->GetStaticMethodID(g.cls, "takeRequest", "()I");
 	g.takeSeekMs = env->GetStaticMethodID(g.cls, "takeSeekMs", "()J");
@@ -187,7 +192,9 @@ void Update(const State &state) {
 	// 見比べない。**飛んだとき**（シーク・掛け直し）だけ渡し直す。
 	bool same = g_shown.valid && g_shown.active == state.active &&
 	            g_shown.playing == state.playing && g_shown.title == state.title &&
-	            g_shown.text == state.text && g_shown.artist == state.artist;
+	            g_shown.text == state.text && g_shown.artist == state.artist &&
+	            g_shown.album == state.album && g_shown.trackNumber == state.trackNumber &&
+	            g_shown.trackCount == state.trackCount;
 	if (same && state.active && state.playing) {
 		const uint32_t expect = g_shown.posMs + (now - g_shown.atTicks);
 		const uint32_t diff =
@@ -202,6 +209,9 @@ void Update(const State &state) {
 	g_shown.title = state.title;
 	g_shown.text = state.text;
 	g_shown.artist = state.artist;
+	g_shown.album = state.album;
+	g_shown.trackNumber = state.trackNumber;
+	g_shown.trackCount = state.trackCount;
 	g_shown.posMs = state.posMs;
 	g_shown.atTicks = now;
 
@@ -214,12 +224,15 @@ void Update(const State &state) {
 	jstring title = NewJString(env, state.title);
 	jstring text = NewJString(env, state.text);
 	jstring artist = NewJString(env, state.artist);
-	env->CallStaticVoidMethod(g.cls, g.update, title, text, artist,
+	jstring album = NewJString(env, state.album);
+	env->CallStaticVoidMethod(g.cls, g.update, title, text, artist, album,
+	                          (jint)state.trackNumber, (jint)state.trackCount,
 	                          state.playing ? JNI_TRUE : JNI_FALSE, (jlong)state.posMs,
 	                          (jlong)state.durMs);
 	env->DeleteLocalRef(title);
 	env->DeleteLocalRef(text);
 	env->DeleteLocalRef(artist);
+	env->DeleteLocalRef(album);
 }
 
 void Shutdown() {
@@ -233,7 +246,7 @@ Request TakeRequest() {
 	if (!Available()) return kRequestNone;
 	const jint r = Env()->CallStaticIntMethod(g.cls, g.takeRequest);
 	// Java 側の定数はこの enum と同じ並び (PlaybackBridge.REQ_*)。
-	if (r <= kRequestNone || r > kRequestSeekTo) return kRequestNone;
+	if (r <= kRequestNone || r > kRequestBluetoothConnected) return kRequestNone;
 	return (Request)r;
 }
 

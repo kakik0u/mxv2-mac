@@ -10,6 +10,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
+import android.media.AudioDeviceCallback;
+import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
 import android.media.session.MediaSession;
 import android.os.Build;
@@ -18,6 +20,8 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
+
+import java.util.HashSet;
 
 /**
  * 演奏中の通知を出す前面サービス。
@@ -43,6 +47,13 @@ public class PlaybackService extends Service {
 	static final String ACTION_PAUSE = "net.gorry.mxv2.action.PAUSE";
 	static final String ACTION_NEXT = "net.gorry.mxv2.action.NEXT";
 	static final String ACTION_STOP = "net.gorry.mxv2.action.STOP";
+
+	/**
+	 * Bluetooth の機器がつながってから再開を知らせるまでの間 (ms)。
+	 * つながった直後は音の行き先の切り替えや、相手（カーオーディオ）の入力の
+	 * 切り替えが済んでおらず、鳴らし始めても頭が聞こえないことがある。
+	 */
+	private static final long BT_CONNECTED_DELAY_MS = 1500;
 
 	private Handler mHandler;
 	private PowerManager.WakeLock mWakeLock;
@@ -71,12 +82,32 @@ public class PlaybackService extends Service {
 		    }
 	    };
 
-	/** ヘッドホンが抜けた。スピーカーで鳴り出さないように止める。 */
+	/** ヘッドホンが抜けた・Bluetooth が切れた。スピーカーで鳴り出さないように止める。 */
 	private final BroadcastReceiver mNoisyReceiver = new BroadcastReceiver() {
 		public void onReceive(Context context, Intent intent) {
 			if (AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction())) {
-				PlaybackBridge.postRequest(PlaybackBridge.REQ_PAUSE);
+				PlaybackBridge.postRequest(PlaybackBridge.REQ_ROUTE_LOST);
 			}
+		}
+	};
+
+	/**
+	 * いまつながっている Bluetooth の出力機器 (AudioDeviceInfo.getId)。
+	 * 登録した直後の onAudioDevicesAdded には、もともとつながっていた機器が
+	 * 並んで届くので、それを「つながった」と読まないために覚えておく。
+	 */
+	private final HashSet<Integer> mBtDevices = new HashSet<Integer>();
+
+	/**
+	 * Bluetooth の出力機器がつながったら知らせる。車のエンジンを切って
+	 * 掛け直したときに、切れたことで止めた演奏を再開するため（再開するかは
+	 * ネイティブ側が設定の [Bluetooth] ResumeOnReconnect を見て決める）。
+	 */
+	private AudioDeviceCallback mDeviceCallback;
+
+	private final Runnable mPostBtConnected = new Runnable() {
+		public void run() {
+			PlaybackBridge.postRequest(PlaybackBridge.REQ_BT_CONNECTED);
 		}
 	};
 
@@ -103,6 +134,7 @@ public class PlaybackService extends Service {
 
 		registerReceiver(mNoisyReceiver,
 		                 new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
+		registerDeviceCallback();
 	}
 
 	@Override
@@ -146,6 +178,7 @@ public class PlaybackService extends Service {
 		} catch (Exception ignored) {
 			// 登録前に落ちたときだけ来る。
 		}
+		unregisterDeviceCallback();
 		abandonFocus();
 		releaseWakeLock();
 		stopForeground(true);
@@ -279,6 +312,48 @@ public class PlaybackService extends Service {
 		ch.setSound(null, null);
 		ch.enableVibration(false);
 		nm.createNotificationChannel(ch);
+	}
+
+	private void registerDeviceCallback() {
+		if (mAudioManager == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+		for (AudioDeviceInfo d : mAudioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
+			if (AudioRouteBridge.isBluetooth(d)) mBtDevices.add(Integer.valueOf(d.getId()));
+		}
+		mDeviceCallback = new AudioDeviceCallback() {
+			@Override
+			public void onAudioDevicesAdded(AudioDeviceInfo[] added) {
+				boolean connected = false;
+				for (AudioDeviceInfo d : added) {
+					if (!d.isSink() || !AudioRouteBridge.isBluetooth(d)) continue;
+					if (mBtDevices.add(Integer.valueOf(d.getId()))) connected = true;
+				}
+				if (connected) {
+					mHandler.removeCallbacks(mPostBtConnected);
+					mHandler.postDelayed(mPostBtConnected, BT_CONNECTED_DELAY_MS);
+				}
+			}
+
+			@Override
+			public void onAudioDevicesRemoved(AudioDeviceInfo[] removed) {
+				for (AudioDeviceInfo d : removed) {
+					mBtDevices.remove(Integer.valueOf(d.getId()));
+				}
+			}
+		};
+		// 呼び戻しは UI スレッドで受ける（mBtDevices をそこでだけ触る）。
+		mAudioManager.registerAudioDeviceCallback(mDeviceCallback, mHandler);
+	}
+
+	private void unregisterDeviceCallback() {
+		if (mHandler != null) mHandler.removeCallbacks(mPostBtConnected);
+		if (mDeviceCallback == null || mAudioManager == null) return;
+		try {
+			mAudioManager.unregisterAudioDeviceCallback(mDeviceCallback);
+		} catch (Exception ignored) {
+			// 登録前に落ちたときだけ来る。
+		}
+		mDeviceCallback = null;
+		mBtDevices.clear();
 	}
 
 	private void requestFocus() {

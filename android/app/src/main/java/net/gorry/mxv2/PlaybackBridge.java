@@ -52,6 +52,10 @@ public class PlaybackBridge {
 	public static final int REQ_SEEK_BACK = 9;
 	/** 位置は takeSeekMs で取る。 */
 	public static final int REQ_SEEK_TO = 10;
+	/** 出力先が外れた (BECOMING_NOISY)。 */
+	public static final int REQ_ROUTE_LOST = 11;
+	/** Bluetooth の出力機器がつながった。 */
+	public static final int REQ_BT_CONNECTED = 12;
 
 	private static Activity sActivity;
 
@@ -81,8 +85,13 @@ public class PlaybackBridge {
 	private static boolean sActive;
 	private static String sTitle = "";
 	private static String sText = "";
-	/** セッション（車の画面など）に出すアーティスト欄。フォルダ名。 */
+	/** セッション（車の画面など）に出すアーティスト欄とアルバム欄。
+	 *  MDX には曲名しか無いので、アーティストはファイル名、アルバムはフォルダ名。 */
 	private static String sArtist = "";
+	private static String sAlbum = "";
+	/** フォルダの中で何曲目か（1 から）と曲数。分からなければ 0。 */
+	private static int sTrackNumber;
+	private static int sTrackCount;
 	private static boolean sPlaying;
 	private static long sPosMs;
 	private static long sDurMs;
@@ -138,7 +147,8 @@ public class PlaybackBridge {
 	 * 変わるだけならサービスは動いたままなので、バックグラウンドでの自動送り
 	 * (CONT/REPEAT) でも起こし直しは要らない。
 	 */
-	public static void update(String title, String text, String artist, boolean playing,
+	public static void update(String title, String text, String artist, String album,
+	                          int trackNumber, int trackCount, boolean playing,
 	                          long posMs, long durMs) {
 		final Activity a = sActivity;
 		if (a == null) return;
@@ -149,6 +159,9 @@ public class PlaybackBridge {
 			sTitle = title;
 			sText = text;
 			sArtist = artist;
+			sAlbum = album;
+			sTrackNumber = trackNumber;
+			sTrackCount = trackCount;
 			sPlaying = playing;
 			sPosMs = posMs;
 			sDurMs = durMs;
@@ -284,6 +297,9 @@ public class PlaybackBridge {
 	 *  曲が替わったように見えることがある）。 */
 	private static String sShownTitle;
 	private static String sShownArtist;
+	private static String sShownAlbum;
+	private static int sShownTrackNumber = -1;
+	private static int sShownTrackCount = -1;
 	private static long sShownDurMs = -1;
 
 	/** UI スレッドで。今の状態をセッションへ写す。 */
@@ -294,15 +310,25 @@ public class PlaybackBridge {
 
 		// 止めている間も最後の曲の情報は残す（車の画面に何も出ないよりよい）。
 		if (s.active && !(s.title.equals(sShownTitle) && s.artist.equals(sShownArtist) &&
-		                  s.durMs == sShownDurMs)) {
+		                  s.album.equals(sShownAlbum) && s.trackNumber == sShownTrackNumber &&
+		                  s.trackCount == sShownTrackCount && s.durMs == sShownDurMs)) {
 			sShownTitle = s.title;
 			sShownArtist = s.artist;
+			sShownAlbum = s.album;
+			sShownTrackNumber = s.trackNumber;
+			sShownTrackCount = s.trackCount;
 			sShownDurMs = s.durMs;
 			MediaMetadata.Builder md = new MediaMetadata.Builder();
 			md.putString(MediaMetadata.METADATA_KEY_TITLE, s.title);
 			// 状態の文字（演奏中・CONT など）は通知の本文だけに出す。
 			// ここへ入れると車や AV アンプの画面にそのまま出る。
 			md.putString(MediaMetadata.METADATA_KEY_ARTIST, s.artist);
+			md.putString(MediaMetadata.METADATA_KEY_ALBUM, s.album);
+			// 分からないときは入れない（0 を渡すと「0 曲目」と出す相手がいる）。
+			if (s.trackNumber > 0 && s.trackCount > 0) {
+				md.putLong(MediaMetadata.METADATA_KEY_TRACK_NUMBER, s.trackNumber);
+				md.putLong(MediaMetadata.METADATA_KEY_NUM_TRACKS, s.trackCount);
+			}
 			md.putLong(MediaMetadata.METADATA_KEY_DURATION, s.durMs);
 			session.setMetadata(md.build());
 		}
@@ -374,6 +400,9 @@ public class PlaybackBridge {
 		s.title = sTitle;
 		s.text = sText;
 		s.artist = sArtist;
+		s.album = sAlbum;
+		s.trackNumber = sTrackNumber;
+		s.trackCount = sTrackCount;
 		s.playing = sPlaying;
 		s.posMs = sPosMs;
 		s.durMs = sDurMs;
@@ -393,6 +422,9 @@ public class PlaybackBridge {
 		String title;
 		String text;
 		String artist;
+		String album;
+		int trackNumber;
+		int trackCount;
 		boolean playing;
 		long posMs;
 		long durMs;

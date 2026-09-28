@@ -231,19 +231,19 @@ void RepostResizeEvent(SDL_Window *window) {
 // TV のリモコンの PAUSE / PLAY は、手元の一時停止・再開として扱う（通知の
 // ボタンと同じ）。再開したら TV に今の位置から読み込み直させる（止めていた間も
 // 流れは進むので、そのままだと止めていた長さだけ TV が遅れる）。
-static void PollCast(mxv2::Player *player, bool *pausedByFocus) {
+static void PollCast(mxv2::Player *player, AutoPause *autoPause) {
 	switch (mxv2::cast::Poll()) {
 		case mxv2::cast::kEventEnded:
-			*pausedByFocus = false;
+			*autoPause = kAutoPauseNone;
 			if (player->playing() && !player->paused()) player->Pause();
 			mxv2::cast::Stop();
 			break;
 		case mxv2::cast::kEventRemotePause:
-			*pausedByFocus = false;
+			*autoPause = kAutoPauseNone;
 			if (player->playing() && !player->paused()) player->Pause();
 			break;
 		case mxv2::cast::kEventRemotePlay:
-			*pausedByFocus = false;
+			*autoPause = kAutoPauseNone;
 			if (player->paused()) player->Resume();
 			mxv2::cast::ResumeRemote();
 			break;
@@ -797,9 +797,9 @@ int main(int argc, char **argv) {
 	bool quit = false;
 	// 端末がバックグラウンドへ回した (Android)。**音は止めず、描くのだけ止める。**
 	bool inBackground = false;
-	// 他のアプリに音を譲って止めた（通知の窓口から来る）。返してもらったときに
-	// 自動で再開してよいかの印。
-	bool pausedByFocus = false;
+	// 他のアプリに音を譲った・出力先が外れたので止めた（通知の窓口から来る）。
+	// 都合が解けたときに自動で再開してよいかの印。
+	AutoPause autoPause = kAutoPauseNone;
 	// 音の途切れを知らせた回数と、次に知らせてよい時刻。
 	uint32_t underrunsSeen = 0;
 	uint32_t underrunNextMs = 0;
@@ -1292,15 +1292,15 @@ int main(int argc, char **argv) {
 			if (filer.PollDir()) fileListRefresh = true;
 			if (filer.PollTitles()) fileListRefresh = true;
 			PollSong(ctx);
-			PollNotifyRequests(ctx, &filer, &pausedByFocus);
+			PollNotifyRequests(ctx, &filer, &autoPause, settings);
 			PollUnderruns(player, &underrunsSeen, &underrunNextMs);
 			PollOutputLatency(&player, settings, &outputLatencyLogged);
 			// Chromecast へは音だけ送り続ける（絵は描かないので、受信側には
 			// 最後の絵が出たまま）。受信側が終わったのはここでも拾う。
-			PollCast(&player, &pausedByFocus);
+			PollCast(&player, &autoPause);
 
 			// 描かないが、ビジュアライズのイベントは食べておく。ためたままに
-			// すると 64K でキューが溢れ、**古いものが残って新しいものが
+			// するとキュー（DispQueue::kCapacity）が溢れ、**古いものが残って新しいものが
 			// 捨てられる**（Push が満杯で失敗する側）ので、前面へ戻ったときの
 			// 描き直しの指示まで消えてしまう。
 			if (player.TakeDisplayReset()) visualizer.AllOff();
@@ -1308,7 +1308,8 @@ int main(int argc, char **argv) {
 
 			PollSongEnd(ctx, &filer, player.visualFrame(), kLingerFrames, autoNext, autoRepeat,
 			            quitWhenDone, &endFrame, &quit);
-			UpdateNowPlaying(player, currentPath, playing, autoNext, autoRepeat);
+			UpdateNowPlaying(player, filer, currentPath, playing, autoNext, autoRepeat,
+			                 settings);
 			continue;
 		}
 
@@ -1340,7 +1341,7 @@ int main(int argc, char **argv) {
 		if (filer.PollDir()) fileListRefresh = true;
 		if (filer.PollTitles()) fileListRefresh = true;
 		PollSong(ctx);
-		PollNotifyRequests(ctx, &filer, &pausedByFocus);
+		PollNotifyRequests(ctx, &filer, &autoPause, settings);
 		PollUnderruns(player, &underrunsSeen, &underrunNextMs);
 		PollOutputLatency(&player, settings, &outputLatencyLogged);
 
@@ -1477,7 +1478,7 @@ int main(int argc, char **argv) {
 			// 一時停止してから終える（2026-09-26、ユーザーの指示）。先に止めるのは、
 			// 後始末で手元の消音が外れて、その場で鳴り出さないようにするため。
 			case mxv2::SettingsUi::kRequestStopCast:
-				pausedByFocus = false;
+				autoPause = kAutoPauseNone;
 				if (player.playing() && !player.paused()) player.Pause();
 				mxv2::cast::Stop();
 				break;
@@ -1533,7 +1534,7 @@ int main(int argc, char **argv) {
 		// （ダイアログも写る）。30fps に間引くのは sdlcastg。
 		mxv2::cast::EndFrame(screen.renderer(), screen.CanvasRect(), frame, player.sampleRate());
 		screen.Present();
-		PollCast(&player, &pausedByFocus);
+		PollCast(&player, &autoPause);
 
 		// OS の「フォルダを探す」ダイアログ。開いている間はこちらが止まるので、
 		// 1 フレーム描き終えてから開く。
@@ -1548,7 +1549,8 @@ int main(int argc, char **argv) {
 
 		PollSongEnd(ctx, &filer, frame, kLingerFrames, autoNext, autoRepeat, quitWhenDone,
 		            &endFrame, &quit);
-		UpdateNowPlaying(player, currentPath, playing, autoNext, autoRepeat);
+		UpdateNowPlaying(player, filer, currentPath, playing, autoNext, autoRepeat,
+		                 settings);
 	}
 
 	// 通知を消す。終了の理由（× / [終了] / -quit）によらずここを通る。

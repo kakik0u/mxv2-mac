@@ -16,14 +16,18 @@
 #if defined(__ANDROID__)
 #include <aaudio/AAudio.h>
 #include <dlfcn.h>
+#include <jni.h>
 #include <time.h>
 #include <android/api-level.h>
+#include <SDL.h>
 #elif defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <audioclient.h>
 #include <cfgmgr32.h>
 #include <mmdeviceapi.h>
+#include <propsys.h>
+#include <SDL.h>
 #endif
 
 namespace mxv2 {
@@ -44,10 +48,9 @@ struct State {
 	std::thread thread;
 	std::atomic<bool> stop;
 	std::atomic<int> latencyMs;
-	std::atomic<bool> bluetooth;
 	int sampleRate;
 	bool running;
-	State() : stop(false), latencyMs(-1), bluetooth(false), sampleRate(48000), running(false) {}
+	State() : stop(false), latencyMs(-1), sampleRate(48000), running(false) {}
 };
 
 State &G() {
@@ -240,6 +243,32 @@ bool IsBluetoothEndpoint(const std::wstring &endpointId) {
 	return _wcsnicmp(id, L"BTH", 3) == 0;
 }
 
+// endpoint の「機器の名前」（PKEY_DeviceInterface_FriendlyName。サウンドの
+// 設定で「ヘッドホン (BT525 FM)」のかっこの中に出る名前）。UTF-8。
+// functiondiscoverykeys_devpkey.h の定義は INITGUID 無しでは実体が無いので、
+// 値をここに写してある。
+std::string EndpointDeviceName(IMMDevice *device) {
+	static const PROPERTYKEY kDeviceInterfaceFriendlyName = {
+	    {0x026e516e, 0xb814, 0x414b, {0x83, 0xcd, 0x85, 0x6d, 0x6f, 0xef, 0x48, 0x22}}, 2};
+	std::string out;
+	IPropertyStore *props = 0;
+	if (FAILED(device->OpenPropertyStore(STGM_READ, &props))) return out;
+	PROPVARIANT v;
+	PropVariantInit(&v);
+	if (SUCCEEDED(props->GetValue(kDeviceInterfaceFriendlyName, &v)) && v.vt == VT_LPWSTR &&
+	    v.pwszVal != 0) {
+		const int n = WideCharToMultiByte(CP_UTF8, 0, v.pwszVal, -1, NULL, 0, NULL, NULL);
+		if (n > 1) {
+			out.resize((size_t)n);
+			WideCharToMultiByte(CP_UTF8, 0, v.pwszVal, -1, &out[0], n, NULL, NULL);
+			out.resize((size_t)n - 1);
+		}
+	}
+	PropVariantClear(&v);
+	props->Release();
+	return out;
+}
+
 double NowSec() {
 	LARGE_INTEGER c, f;
 	QueryPerformanceCounter(&c);
@@ -270,7 +299,6 @@ void MeasureOnce(int) {
 			CoTaskMemFree(id);
 		}
 	}
-	G().bluetooth.store(IsBluetoothEndpoint(deviceId));
 	hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, NULL, (void **)&client);
 	if (FAILED(hr)) goto done;
 	hr = client->GetMixFormat(&format);
@@ -387,15 +415,157 @@ void SetActive(bool active, int sampleRate) {
 
 int LatencyMs() { return G().latencyMs.load(std::memory_order_relaxed); }
 
-bool MeasuresBluetooth() {
-#if defined(_WIN32)
-	return false;
-#else
+#if defined(__ANDROID__)
+
+namespace {
+
+// Java 側 (net.gorry.mxv2.AudioRouteBridge) の窓口。FindClass はスレッドの
+// クラスローダを使うので、メインスレッドからだけ引く（nowplaying.cpp と同じ）。
+struct RouteJni {
+	bool tried;
+	bool ok;
+	jclass cls;
+	jmethodID name;
+};
+RouteJni g_route = { false, false, 0, 0 };
+
+bool EnsureRouteJni(JNIEnv *env) {
+	if (g_route.tried) return g_route.ok;
+	g_route.tried = true;
+	jclass local = env->FindClass("net/gorry/mxv2/AudioRouteBridge");
+	if (local == 0) {
+		env->ExceptionClear();
+		printf("warning  : AudioRouteBridge class not found (no Bluetooth device name)\n");
+		return false;
+	}
+	g_route.cls = (jclass)env->NewGlobalRef(local);
+	env->DeleteLocalRef(local);
+	g_route.name = env->GetStaticMethodID(g_route.cls, "bluetoothOutputName", "()Ljava/lang/String;");
+	if (g_route.name == 0) {
+		env->ExceptionClear();
+		printf("warning  : AudioRouteBridge methods not found (no Bluetooth device name)\n");
+		return false;
+	}
+	g_route.ok = true;
 	return true;
-#endif
 }
 
-bool OutputIsBluetooth() { return G().bluetooth.load(std::memory_order_relaxed); }
+std::string QueryRouteName() {
+	JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+	if (env == 0 || !EnsureRouteJni(env)) return std::string();
+	jstring js = (jstring)env->CallStaticObjectMethod(g_route.cls, g_route.name);
+	if (env->ExceptionCheck()) {
+		env->ExceptionClear();
+		return std::string();
+	}
+	// GetStringUTFChars は「修正 UTF-8」を返し、絵文字などの 4 バイト文字が
+	// 崩れる（機器の名前は利用者が付けられる）ので、UTF-16 から自分で作る。
+	std::string out;
+	if (js != 0) {
+		const jsize len = env->GetStringLength(js);
+		std::vector<jchar> u16((size_t)len);
+		if (len > 0) env->GetStringRegion(js, 0, len, &u16[0]);
+		env->DeleteLocalRef(js);
+		for (size_t i = 0; i < u16.size(); i++) {
+			uint32_t cp = u16[i];
+			if (cp >= 0xd800 && cp < 0xdc00 && i + 1 < u16.size() && u16[i + 1] >= 0xdc00 &&
+			    u16[i + 1] < 0xe000) {
+				cp = 0x10000 + ((cp - 0xd800) << 10) + (u16[i + 1] - 0xdc00);
+				i++;
+			}
+			if (cp < 0x80) {
+				out += (char)cp;
+			} else if (cp < 0x800) {
+				out += (char)(0xc0 | (cp >> 6));
+				out += (char)(0x80 | (cp & 0x3f));
+			} else if (cp < 0x10000) {
+				out += (char)(0xe0 | (cp >> 12));
+				out += (char)(0x80 | ((cp >> 6) & 0x3f));
+				out += (char)(0x80 | (cp & 0x3f));
+			} else {
+				out += (char)(0xf0 | (cp >> 18));
+				out += (char)(0x80 | ((cp >> 12) & 0x3f));
+				out += (char)(0x80 | ((cp >> 6) & 0x3f));
+				out += (char)(0x80 | (cp & 0x3f));
+			}
+		}
+	}
+	return out;
+}
+
+}  // namespace
+
+#elif defined(_WIN32)
+
+namespace {
+
+// 既定の出力が Bluetooth の機器ならその名前。測る作業スレッドとは別に、
+// メインスレッドで引く（演奏していなくても分かるように。設定の
+// [Bluetooth（機器名）] は、つないでいる機器があるときだけ出す）。
+std::string QueryRouteName() {
+	// SDL もメインスレッドで COM を STA で使うので、それに合わせる。
+	// 対にする CoUninitialize は呼ばない（終わるまで使う）。
+	static bool comTried = false;
+	static IMMDeviceEnumerator *enumerator = 0;
+	if (!comTried) {
+		comTried = true;
+		const HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+		// RPC_E_CHANGED_MODE は「別の形で初期化済み」。それでも使える。
+		if (SUCCEEDED(hr) || hr == RPC_E_CHANGED_MODE) {
+			CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_ALL,
+			                 IID_PPV_ARGS(&enumerator));
+		}
+	}
+	if (enumerator == 0) return std::string();
+
+	std::string name;
+	IMMDevice *device = 0;
+	if (FAILED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device))) return name;
+	LPWSTR id = 0;
+	if (SUCCEEDED(device->GetId(&id)) && id != 0) {
+		if (IsBluetoothEndpoint(id)) {
+			name = EndpointDeviceName(device);
+			if (name.empty()) name = "Bluetooth";  // 空だと Bluetooth でないと読める
+		}
+		CoTaskMemFree(id);
+	}
+	device->Release();
+	return name;
+}
+
+}  // namespace
+
+#else
+
+namespace {
+std::string QueryRouteName() { return std::string(); }
+}  // namespace
+
+#endif
+
+namespace {
+
+// 引き直す間隔と、最後に引いた結果。
+const uint32_t kRouteCheckMs = 1000;
+bool g_routeValid = false;
+uint32_t g_routeTicks = 0;
+std::string g_routeName;
+
+}  // namespace
+
+std::string BluetoothName() {
+	const uint32_t now = SDL_GetTicks();
+	if (!g_routeValid || now - g_routeTicks >= kRouteCheckMs) {
+		g_routeName = QueryRouteName();
+		g_routeValid = true;
+		g_routeTicks = now;
+	}
+	return g_routeName;
+}
+
+bool OutputIsBluetooth() { return !BluetoothName().empty(); }
+
+void RefreshBluetoothName() { g_routeValid = false; }
 
 void Shutdown() {
 	State &g = G();

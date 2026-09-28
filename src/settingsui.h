@@ -215,6 +215,7 @@ public:
 		if (showFileSystems_) { showFileSystems_ = false; return true; }
 		if (showBookmarks_) { showBookmarks_ = false; return true; }
 		if (showPdxPaths_) { showPdxPaths_ = false; return true; }
+		if (showLatency_) { showLatency_ = false; return true; }
 		if (showFolder_) { showFolder_ = false; return true; }
 		if (showColors_) { showColors_ = false; return true; }
 		if (visible_) { visible_ = false; return true; }
@@ -524,7 +525,8 @@ private:
 	// 間は別のものを開けない（先にそれを閉じてもらう）。
 	bool busy() const {
 		return visible_ || showColors_ || showAbout_ || showCast_ || showFolder_ || showHelp_ ||
-		       showFileSystems_ || showBookmarks_ || showPdxPaths_ || showStartup_;
+		       showFileSystems_ || showBookmarks_ || showPdxPaths_ || showStartup_ ||
+		       showLatency_;
 	}
 
 	// 操作方法のダイアログ。
@@ -728,6 +730,25 @@ private:
 	bool pdxOpenRemove_;       // 次のフレームで削除確認を開く
 	bool pdxRemoveOpen_;       // いま開いている（ESC の判断に使う）
 	bool pdxCloseRemove_;      // ESC で閉じてほしい
+	// [画面の遅れ]（[演奏]）と [遅延時間]（[Bluetooth（機器名）]）。設定ウィンドウには
+	// 今の値と [設定…] だけを出し、スライダーはこのダイアログに置く。5 秒近い
+	// 遅れの機器があり、1 本のスライダーでは合わせられないので「秒」と「ミリ秒」の
+	// 2 本に分けた。**鍵盤を見ながら合わせられるよう、画面の中央でなくファイラーの
+	// 側に寄せて出す**（2026-09-28、ユーザーの指示）。開き方と戻り方は
+	// [PDX の探索先] と同じ（設定ウィンドウが閉じきってから開き、閉じたら戻る）。
+	enum LatencyTarget {
+		kLatencyTargetDisplay = 0,  // [演奏] の画面の遅れ（手動のとき）
+		kLatencyTargetBluetooth,    // いまつないでいる Bluetooth の機器の遅延時間
+	};
+	void BuildLatencyWindow(Settings *settings, DrawScreen *draw, Player *player,
+	                        Screen *screen);
+	void OpenLatencyWindow(int target, const std::string &device);
+	const char *LatencyTitle() const;
+	bool showLatency_;
+	bool latencyOpenPending_;       // 設定ウィンドウが閉じたら開く
+	bool latencyReturnToSettings_;  // 閉じたら設定ウィンドウを開き直す
+	int latencyTarget_;             // LatencyTarget
+	std::string latencyDevice_;     // kLatencyTargetBluetooth の機器名（開いたときのもの）
 	bool bmOpenToggle_;        // 次のフレームで Shift+M の確認を開く
 	bool bmToggleOpen_;
 	bool bmCloseToggle_;

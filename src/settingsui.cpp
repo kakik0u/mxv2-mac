@@ -119,6 +119,8 @@ const char *kQuitTitle;
 const char *kHandedTitle;
 const char *kUpdateTitle;
 const char *kCastTitle;
+const char *kDisplayLatencyTitle;
+const char *kBtLatencyTitle;
 
 // 題名を作る。id 付きのものは文字列を静的に持ってから返す。
 const char *TitleWithId(const char *key, const char *id) {
@@ -155,6 +157,8 @@ void InitTitles() {
 	kHandedTitle = Msg("Dialog.Handed");
 	kUpdateTitle = Msg("Dialog.Update");
 	kCastTitle = Msg("Dialog.Cast");
+	kDisplayLatencyTitle = Msg("Dialog.DisplayLatency");
+	kBtLatencyTitle = Msg("Dialog.BluetoothLatency");
 }
 
 // 言語を入れ替えたあと、題名を新しいカタログから取り直す。古いほうの番地は
@@ -446,6 +450,10 @@ SettingsUi::SettingsUi()
       pdxOpenRemove_(false),
       pdxRemoveOpen_(false),
       pdxCloseRemove_(false),
+      showLatency_(false),
+      latencyOpenPending_(false),
+      latencyReturnToSettings_(false),
+      latencyTarget_(kLatencyTargetDisplay),
       bmOpenToggle_(false),
       bmJumpPending_(false),
       bmToggleOpen_(false),
@@ -901,6 +909,11 @@ void SettingsUi::Build(Settings *settings, DrawScreen *draw, Player *player, Fil
 		pdxOpenPending_ = false;
 		showPdxPaths_ = true;
 	}
+	// [画面の遅れ] / [遅延時間] の [設定…] から。同じく設定ウィンドウが閉じきってから。
+	if (latencyOpenPending_ && !ImGui::IsPopupOpen(kSettingsTitle)) {
+		latencyOpenPending_ = false;
+		showLatency_ = true;
+	}
 	BuildFolderWindow(settings, filer);
 	PollSafPicked(filer);
 	BuildFileSystemsWindow(filer);
@@ -911,6 +924,7 @@ void SettingsUi::Build(Settings *settings, DrawScreen *draw, Player *player, Fil
 	}
 	BuildBookmarksWindow(settings, filer);
 	BuildPdxPathsWindow(settings, filer);
+	BuildLatencyWindow(settings, draw, player, screen);
 	BuildBookmarkToggleWindow(settings, filer);
 	BuildQuitWindow();
 	BuildHandedWindow(filer);
@@ -940,6 +954,11 @@ void SettingsUi::Build(Settings *settings, DrawScreen *draw, Player *player, Fil
 	    !folderOpenPending_ && !folderReturnToPdx_ && !ImGui::IsPopupOpen(kPdxPathsTitle) &&
 	    !ImGui::IsPopupOpen(folderTitle())) {
 		pdxReturnToSettings_ = false;
+		visible_ = true;
+	}
+	if (latencyReturnToSettings_ && !showLatency_ && !latencyOpenPending_ &&
+	    !ImGui::IsPopupOpen(LatencyTitle())) {
+		latencyReturnToSettings_ = false;
 		visible_ = true;
 	}
 

@@ -27,6 +27,8 @@ public class MainActivity extends SDLActivity {
 		OpenIntentBridge.setActivity(this);
 		// 小窓（ピクチャー・イン・ピクチャー）の窓口（src/pip.cpp）。
 		PipBridge.setActivity(this);
+		// 出力先の Bluetooth 機器の名前の窓口（src/outputlatency.cpp）。
+		AudioRouteBridge.setActivity(this);
 		super.onCreate(savedInstanceState);
 		requestNotificationPermission();
 	}

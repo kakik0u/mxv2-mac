@@ -103,10 +103,12 @@ struct DispWork {
 
 class DispQueue {
 public:
-	// 旧 mxv と同じ 64K エントリ。2 のべき乗であること（& マスクで回すため）。
-	static const uint32_t kCapacity = 1024 * 64;
+	// 2 のべき乗であること（& マスクで回すため）。旧 mxv は 64K エントリ。
+	// 画面の遅れを最大 10 秒まで取れるようにしたので（Settings::kLatencyMsMax）、
+	// そのあいだのイベントを溜めておけるよう 256K に増やした（2026-09-28）。
+	static const uint32_t kCapacity = 1024 * 256;
 
-	// バッファは 1MB になるのでヒープに置く（スタックには載らない）。
+	// バッファは 4MB になるのでヒープに置く（スタックには載らない）。
 	DispQueue() : buf_(kCapacity), head_(0), tail_(0), dropped_(0) {}
 
 	// 消費側が停止している状態でのみ呼ぶこと（曲の切り替え時など）。

@@ -36,6 +36,12 @@ enum Request {
 	kRequestSeekBack,
 	// 位置を指定して飛ぶ（車の画面・ロック画面の位置の棒）。位置は TakeSeekMs。
 	kRequestSeekTo,
+	// 出力先が外れた (BECOMING_NOISY。Bluetooth が切れた・ヘッドホンが抜けた)。
+	// 鳴っていたら止める。
+	kRequestRouteLost,
+	// Bluetooth の出力機器がつながった。設定の [Bluetooth] ResumeOnReconnect が
+	// 入っていれば、kRequestRouteLost で止めたぶんだけ再開する。
+	kRequestBluetoothConnected,
 };
 
 // 通知に出す文言。SetLabels は Update より先に一度だけ呼ぶ。
@@ -55,12 +61,19 @@ struct State {
 	bool playing;  // 鳴っている（false は一時停止）
 	std::string title;
 	std::string text;  // 状態の行（「演奏中」＋ CONT / REPEAT など）。通知の本文だけ
-	// MediaSession のアーティスト欄（車や AV アンプの画面に出る）。フォルダ名。
+	// MediaSession のアーティスト欄とアルバム欄（車や AV アンプの画面に出る）。
+	// MDX には曲名しか無いので、アーティストは曲のファイル名、アルバムは
+	// フォルダ名を当てる（2026-09-28、ユーザー確認）。
 	std::string artist;
+	std::string album;
+	// フォルダの中で何曲目か（1 から）と曲数。分からなければ 0。
+	int trackNumber;
+	int trackCount;
 	uint32_t posMs;
 	uint32_t durMs;
 
-	State() : active(false), playing(false), posMs(0), durMs(0) {}
+	State()
+	    : active(false), playing(false), trackNumber(0), trackCount(0), posMs(0), durMs(0) {}
 };
 
 // この環境で通知を出せるか。

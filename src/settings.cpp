@@ -70,7 +70,13 @@ Settings::Settings()
       masterVolume(0),  // 中央
       latencyAuto(true),
       latencyMs(0),
-      bluetoothLatencyMs(80),
+#if defined(_WIN32)
+      btDefaultLatencyMs(80),
+#else
+      btDefaultLatencyMs(0),
+#endif
+      btDefaultSwapArtistAlbum(false),
+      btDefaultResumeOnReconnect(true),
       bookmarksDefaulted(true),
       windowX(-1),
       windowY(-1),
@@ -137,9 +143,48 @@ bool Settings::Load(const std::string &path) {
 	latencyMs = ini.GetInt("Play", "Latency", latencyMs);
 	if (latencyMs < kLatencyMsMin) latencyMs = kLatencyMsMin;
 	if (latencyMs > kLatencyMsMax) latencyMs = kLatencyMsMax;
-	bluetoothLatencyMs = ini.GetInt("Play", "BluetoothLatency", bluetoothLatencyMs);
-	if (bluetoothLatencyMs < 0) bluetoothLatencyMs = 0;
-	if (bluetoothLatencyMs > kBluetoothLatencyMsMax) bluetoothLatencyMs = kBluetoothLatencyMsMax;
+#if defined(_WIN32)
+	// 以前の置き場所（[Play] BluetoothLatency → [Bluetooth] Latency）も読む
+	// （次の保存で DefaultLatency へ移る）。Android はそれらを使っていなかった
+	// （値が書かれていても 80 の既定が残っているだけ）ので引き継がない。
+	btDefaultLatencyMs = ini.GetInt("Play", "BluetoothLatency", btDefaultLatencyMs);
+	btDefaultLatencyMs = ini.GetInt("Bluetooth", "Latency", btDefaultLatencyMs);
+#endif
+	btDefaultLatencyMs = ini.GetInt("Bluetooth", "DefaultLatency", btDefaultLatencyMs);
+	if (btDefaultLatencyMs < 0) btDefaultLatencyMs = 0;
+	if (btDefaultLatencyMs > kBluetoothLatencyMsMax) btDefaultLatencyMs = kBluetoothLatencyMsMax;
+	// 機器ごとにする前の置き場所も読む（次の保存で Default… へ移る）。
+	btDefaultSwapArtistAlbum =
+	    ini.GetInt("Bluetooth", "SwapArtistAlbum", btDefaultSwapArtistAlbum ? 1 : 0) != 0;
+	btDefaultSwapArtistAlbum =
+	    ini.GetInt("Bluetooth", "DefaultSwapArtistAlbum", btDefaultSwapArtistAlbum ? 1 : 0) != 0;
+	btDefaultResumeOnReconnect =
+	    ini.GetInt("Bluetooth", "ResumeOnReconnect", btDefaultResumeOnReconnect ? 1 : 0) != 0;
+	btDefaultResumeOnReconnect = ini.GetInt("Bluetooth", "DefaultResumeOnReconnect",
+	                                        btDefaultResumeOnReconnect ? 1 : 0) != 0;
+	{
+		btDevices.clear();
+		int count = ini.GetInt("Bluetooth", "DeviceCount", 0);
+		if (count > kMaxBtDevices) count = kMaxBtDevices;
+		for (int i = 1; i <= count; i++) {
+			char key[32];
+			snprintf(key, sizeof(key), "Device%d", i);
+			BtDevice d;
+			d.name = ini.GetString("Bluetooth", key, "");
+			if (d.name.empty()) continue;
+			snprintf(key, sizeof(key), "Device%dLatency", i);
+			d.latencyMs = ini.GetInt("Bluetooth", key, btDefaultLatencyMs);
+			if (d.latencyMs < 0) d.latencyMs = 0;
+			if (d.latencyMs > kBluetoothLatencyMsMax) d.latencyMs = kBluetoothLatencyMsMax;
+			snprintf(key, sizeof(key), "Device%dSwap", i);
+			d.swapArtistAlbum =
+			    ini.GetInt("Bluetooth", key, btDefaultSwapArtistAlbum ? 1 : 0) != 0;
+			snprintf(key, sizeof(key), "Device%dResume", i);
+			d.resumeOnReconnect =
+			    ini.GetInt("Bluetooth", key, btDefaultResumeOnReconnect ? 1 : 0) != 0;
+			btDevices.push_back(d);
+		}
+	}
 
 	// PDX の探索先。[Path] PdxCount があればその並び、無ければ旧形式の
 	// [Path] PDX（1 本）を 1 件目にする（次の保存で新形式へ書き換わる）。
@@ -251,7 +296,40 @@ bool Settings::Save(const std::string &path) const {
 	ini.SetInt("Play", "Volume", masterVolume);
 	ini.SetInt("Play", "LatencyAuto", latencyAuto ? 1 : 0);
 	ini.SetInt("Play", "Latency", latencyMs);
-	ini.SetInt("Play", "BluetoothLatency", bluetoothLatencyMs);
+	ini.Remove("Play", "BluetoothLatency");
+	ini.Remove("Bluetooth", "Latency");
+	ini.SetInt("Bluetooth", "DefaultLatency", btDefaultLatencyMs);
+	{
+		int count = (int)btDevices.size();
+		if (count > kMaxBtDevices) count = kMaxBtDevices;
+		ini.SetInt("Bluetooth", "DeviceCount", count);
+		for (int i = 1; i <= kMaxBtDevices; i++) {
+			char key[32];
+			char keyLatency[32];
+			char keySwap[32];
+			char keyResume[32];
+			snprintf(key, sizeof(key), "Device%d", i);
+			snprintf(keyLatency, sizeof(keyLatency), "Device%dLatency", i);
+			snprintf(keySwap, sizeof(keySwap), "Device%dSwap", i);
+			snprintf(keyResume, sizeof(keyResume), "Device%dResume", i);
+			if (i <= count) {
+				const BtDevice &d = btDevices[(size_t)i - 1];
+				ini.SetString("Bluetooth", key, d.name);
+				ini.SetInt("Bluetooth", keyLatency, d.latencyMs);
+				ini.SetInt("Bluetooth", keySwap, d.swapArtistAlbum ? 1 : 0);
+				ini.SetInt("Bluetooth", keyResume, d.resumeOnReconnect ? 1 : 0);
+			} else {
+				ini.Remove("Bluetooth", key);
+				ini.Remove("Bluetooth", keyLatency);
+				ini.Remove("Bluetooth", keySwap);
+				ini.Remove("Bluetooth", keyResume);
+			}
+		}
+	}
+	ini.Remove("Bluetooth", "SwapArtistAlbum");
+	ini.Remove("Bluetooth", "ResumeOnReconnect");
+	ini.SetInt("Bluetooth", "DefaultSwapArtistAlbum", btDefaultSwapArtistAlbum ? 1 : 0);
+	ini.SetInt("Bluetooth", "DefaultResumeOnReconnect", btDefaultResumeOnReconnect ? 1 : 0);
 
 	{
 		int count = (int)pdxPaths.size();
@@ -366,7 +444,12 @@ bool Settings::SaveFields(const std::string &path, unsigned fields) const {
 	if (fields & kFieldLatency) {
 		out.latencyAuto = latencyAuto;
 		out.latencyMs = latencyMs;
-		out.bluetoothLatencyMs = bluetoothLatencyMs;
+	}
+	if (fields & kFieldBluetooth) {
+		out.btDefaultLatencyMs = btDefaultLatencyMs;
+		out.btDefaultSwapArtistAlbum = btDefaultSwapArtistAlbum;
+		out.btDefaultResumeOnReconnect = btDefaultResumeOnReconnect;
+		out.btDevices = btDevices;
 	}
 	if (fields & kFieldPdxPaths) out.pdxPaths = pdxPaths;
 	if (fields & kFieldFileSystems) out.fileSystems = fileSystems;
@@ -386,6 +469,36 @@ bool Settings::SaveFields(const std::string &path, unsigned fields) const {
 		out.castVideoAdvanceMs = castVideoAdvanceMs;
 	}
 	return out.Save(path);
+}
+
+Settings::BtDevice Settings::BluetoothDeviceFor(const std::string &name) const {
+	for (size_t i = 0; i < btDevices.size(); i++) {
+		if (btDevices[i].name == name) return btDevices[i];
+	}
+	BtDevice d;
+	d.name = name;
+	d.latencyMs = btDefaultLatencyMs;
+	d.swapArtistAlbum = btDefaultSwapArtistAlbum;
+	d.resumeOnReconnect = btDefaultResumeOnReconnect;
+	return d;
+}
+
+int Settings::BluetoothLatencyFor(const std::string &name) const {
+	return BluetoothDeviceFor(name).latencyMs;
+}
+
+void Settings::SetBluetoothDevice(const BtDevice &device) {
+	BtDevice d = device;
+	if (d.latencyMs < 0) d.latencyMs = 0;
+	if (d.latencyMs > kBluetoothLatencyMsMax) d.latencyMs = kBluetoothLatencyMsMax;
+	for (size_t i = 0; i < btDevices.size(); i++) {
+		if (btDevices[i].name == d.name) {
+			btDevices[i] = d;
+			return;
+		}
+	}
+	btDevices.push_back(d);
+	if ((int)btDevices.size() > kMaxBtDevices) btDevices.erase(btDevices.begin());
 }
 
 }  // namespace mxv2

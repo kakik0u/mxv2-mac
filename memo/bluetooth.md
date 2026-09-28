@@ -199,3 +199,112 @@ stop で STOPPED、セッションはメディアボタンの受け手のまま 
 - 設定欄の出力先の遅れは、Windows で Bluetooth のとき「出力先の遅れ 122 ms（計測値 42 ms ＋ 80 ms）」（Settings.LatencyOutputBluetooth。ユーザーの文言）。
 - 設定欄の行は自動の入り切り・出力先で出し消ししない（使わないスライダーは淡色、注記は空行で高さを保つ。ユーザーの指示）。
   → ユーザーが画面で確認（2026-09-27）。
+
+### 曲の頭が欠ける件（2026-09-27、対処なし）
+
+BT525（Windows）で gra318.mdx → SABER1.MDX と移ると SABER1 の頭が欠ける。
+「最後にフェードアウトする」を切ると欠けない → フェードアウト後の無音で **BT525 が自分で
+ミュート（無音ミュート）し、戻るまでに頭が欠ける**。機器側の仕様としてユーザーが「問題なし」。
+mxv2 は曲の切り替えで WASAPI を止めない（SDL の一時停止は無音を流し続ける）ので、BT の
+つながりは切れていない。直すなら「完全な 0 を出さず聞こえない揺らぎを乗せる」案（未実施）。
+
+### 曲の情報の割り当て（2026-09-28）
+
+MDX には曲名しか無いので、MediaSession の 3 項目へ次のように当てた（ユーザー確認）。
+
+| 項目 | 値 |
+|---|---|
+| TITLE | MDX のタイトル（空ならファイル名） |
+| ARTIST | 曲のファイル名（例 `f_trial.mdx`）。長いタイトルが切れても曲を見分けられる |
+| ALBUM | フォルダ名（親を 32 文字以内で遡る。以前 ARTIST に入れていたもの） |
+| TRACK_NUMBER / NUM_TRACKS | ファイラーの一覧で何曲目か / 曲数。引けなければ入れない |
+
+- 曲番号は曲が替わったときに `Filer::MdxNumberOf` で引き、その曲の間は持ち続ける
+  （ファイラーで別のフォルダへ移っても表示を変えない）。読み込み中で引けなければ次のフレームで引き直す。
+- Pixel 7a の dumpsys で metadata size=6（上の 5 つ＋長さ）を確認。車・TX-NR676E での見え方は未確認。
+- 機種によってはアルバム欄を出さないので、その場合フォルダ名が見えなくなる（承知の上）。
+
+### 設定の [Bluetooth] グループ（2026-09-28）
+
+- [mxv2 の設定] の [演奏] の次に [Bluetooth] を置いた（ユーザー指示）。
+  - 「アルバム名とアーティスト名を入れ替える」（`[Bluetooth] SwapArtistAlbum`、既定 OFF）。
+    MediaSession のある環境（Android、`nowplaying::Available()`）だけ出す。アルバム欄を出さない相手向け。
+  - 「遅延時間」（旧「Bluetooth 遅延量」、[演奏] から移動）。Bluetooth を測れない環境（Windows）だけ。
+    [演奏] の自動が OFF のときは淡色。ini は `[Bluetooth] Latency` へ移し、旧 `[Play] BluetoothLatency` は
+    読み込みだけ残して保存時に消す。
+  - どちらも出ない環境ではグループごと出さない（Windows は遅延時間だけ、Android は入れ替えだけになる）。
+- Pixel 7a で SwapArtistAlbum=1 にすると ARTIST/ALBUM が入れ替わるのを dumpsys で確認。
+
+### 遅れの注記を 1 行の式に（2026-09-28）
+
+[演奏] の「いま…」「出力先の遅れ…」の 2 行を 1 行にまとめた（ユーザー指示。単位はすべての項目に付ける）。
+`画面の遅れ 53.3 ms ＝ バッファ 5.3 ms ＋ 出力先 48 ms`、Windows+BT は `… ＋ 出力先 42 ms ＋ Bluetooth 80 ms`、
+手動は `画面の遅れ +100.0 ms（手動）`、出力先が 0（未計測・キャスト中）は `＝ バッファ 5.3 ms` だけ。
+キーは Settings.LatencyTotal / LatencyManual / LatencyPart*。区切りの前後の空白は ini で書けないのでコードで足す。
+- 自動が ON のあいだ [画面の遅れ] スライダーは使われない手動の値（例 +47）を淡色で出していて、式に現れず紛らわしかった
+  → 自動のあいだはスライダーに自動の合計（ms に丸め、-200〜500 に収める）を出し、自動を切ったらその値を
+  手動の値として始める（以前の手動の値は上書き）。ユーザーが案 A を選択（2026-09-28）。
+
+### 遅延時間を Bluetooth の機器ごとに（2026-09-28）
+
+TX-NR676E（Pixel 7a）で自動も手動も合わなかった。自動は 354ms（A2DP の HAL は latency=250ms、BT525 とほぼ同じ）で、
+手動は上限 500ms に張り付いていた → **AV アンプの中の処理の遅れは Android から見えず**、しかも 500ms を超えている見立て。
+- 手動の上限を 1000ms に（Settings::kLatencyMsMax）。
+- [Bluetooth] の「遅延時間」を Android でも出し、**機器ごとに**覚えて自動の値へ足す（Windows も同じ仕組み）。
+  - 機器名: Android は `AudioRouteBridge.bluetoothOutputName()`（API 33 以降は getAudioDevicesForAttributes(USAGE_MEDIA)、
+    それ以前は出力の一覧から A2DP/BLE）を main スレッドから 1 秒おきに引く。Windows は endpoint の
+    PKEY_DeviceInterface_FriendlyName（測っている作業スレッドが書く）。
+  - ini: `[Bluetooth] DefaultLatency`（初めての機器。Windows 80 / Android 0。Windows だけ旧 [Bluetooth] Latency・
+    [Play] BluetoothLatency を引き継ぐ）、`DeviceCount` / `Device<n>` / `Device<n>Latency`（最大 32、あふれたら古い順に捨てる）。
+  - スライダーは Bluetooth につないでいるときだけ動き、その機器の値を編集する。注記「いまの出力先: {0}（この機器の値として覚えます）」。
+  - つなぎ替えたらログ「出力先の Bluetooth 機器: {0}（遅延時間 {1} ms）」。
+- Pixel 7a + TX-NR676E で名前は **"Onkyo TX-NR676E E4E3BB"**、出力先の遅れ 358ms、機器の値 0ms で確認。値合わせはこれから。
+- Windows（headless 起動・検証用の userdir）で BT525 は名前 "BT525 FM"、既定 80ms を足して出力先 122ms → 表示の遅らせ 132.7ms。
+- TX-NR676E は電源を入れるたびに中の遅れが 1000ms 以上変わる（ユーザー確認）。接続は AAC（BT525 は SBC）。
+  → 遅延時間の上限 2000ms、手動の上限 2500ms。**毎回変わる機器は利用者がそのつど合わせ直す**（ユーザー判断。
+  マイクで測る案などは採らない）。
+
+### 再接続で一時停止を解除する（2026-09-28）
+
+Pixel 8 Pro + カーオーディオ: ハンドルのボタン（一時停止/解除・前後の曲・シーク）と、車の画面の曲名・アーティスト・
+アルバム・時間はすべて正常（ユーザー確認）。エンジンを切ると BT が切れて一時停止 (BECOMING_NOISY)、掛け直すと BT は
+つながるが一時停止のまま → 設定 [Bluetooth] に「再接続で一時停止を解除する」（ini `[Bluetooth] ResumeOnReconnect`、
+既定 OFF → 同日 ON に変更、Android だけ）を足した（ユーザー指示）。
+- BECOMING_NOISY は REQ_PAUSE でなく **REQ_ROUTE_LOST** を積む。ネイティブは鳴っていたときだけ止めて
+  印 `kAutoPauseRoute` を付ける（他アプリに譲った `kAutoPauseFocus` と同じ仕組み。bool だった pausedByFocus を
+  enum AutoPause にした）。
+- PlaybackService が AudioDeviceCallback を登録し、Bluetooth の出力機器（AudioRouteBridge.isBluetooth）が**新たに**
+  加わったら 1.5 秒後に **REQ_BT_CONNECTED**。登録直後に届く既存の機器は、登録前に getDevices で覚えた id で除く。
+  1.5 秒は、つながった直後だと行き先や車の入力の切り替えが済まず頭が聞こえない見込みでの仮の値（未実測）。
+- REQ_BT_CONNECTED で再開するのは、印が kAutoPauseRoute・設定 ON・一時停止中のときだけ。手や通知・BT 側の
+  ボタンで止めた / 鳴らした場合は印が消えるので再開しない（有線ヘッドホンを抜いて止めたあとで BT がつながった
+  場合は再開する）。
+- 車がエンジン停止の前に AVRCP の PAUSE を送ってくる機種だと印が消えて再開しない。その場合は要検討。
+
+### Bluetooth の設定をすべて機器ごとに（2026-09-28）
+
+ユーザー指示: [Bluetooth] グループの中身をすべて機器別にし、見出しを「Bluetooth（機器名）」にして、
+**つないでいる機器のものだけを出す。つないでいなければグループごと出さない**。
+- Settings::BtDevice に swapArtistAlbum / resumeOnReconnect を足した。ini は `Device<n>Swap` / `Device<n>Resume`。
+  初めての機器は `[Bluetooth] DefaultSwapArtistAlbum` / `DefaultResumeOnReconnect`（UI には出さない。機器ごとに
+  する前の `SwapArtistAlbum` / `ResumeOnReconnect` を読み、次の保存で消す）と `DefaultLatency`。
+- 読み書き: `BluetoothDeviceFor(name)`（無ければ既定で埋める）/ `SetBluetoothDevice(d)`。保存の印は
+  `kFieldBluetooth`（既定値と機器一覧。kFieldLatency からは機器一覧を外した）。
+- 見出しは `Settings.BluetoothDevice`「Bluetooth（{0}）」+ `###Bluetooth`（機器をまたいで開き閉じを保つ）。
+  旧 LatencyBluetoothNow / None の注記は、機器名が見出しに出るので消した。
+- 入れ替えは、いまの出力先が Bluetooth でその機器が ON のときだけ（スピーカーなら入れ替えない）。
+- 再開は REQ_BT_CONNECTED の時点で `outputlatency::RefreshBluetoothName()` してから引いた機器の値を見る。
+- **Windows も同じ形**。そのため Windows の機器名を、測る作業スレッド（演奏中だけ）ではなく
+  メインスレッドで 1 秒ごとに引くようにした（既定の出力 → IsBluetoothEndpoint → FriendlyName。COM は STA で
+  初期化、RPC_E_CHANGED_MODE でも使う）。演奏していなくてもグループが出る。Windows の中身は遅延時間だけ。
+
+### 遅延時間を 2 本のスライダーと別ダイアログに（2026-09-28）
+
+カーオーディオに 5 秒近い遅れがあった（ユーザー）。1 本のスライダーでは合わせられないので:
+- [遅延時間]（Bluetooth）と [画面の遅れ]（[演奏]、手動のとき）をそれぞれ別ダイアログにし、スライダーを
+  「秒」0〜9 と「ミリ秒」0〜999 の 2 本に。[mxv2 の設定] には今の値と [設定…] だけ（Button.Setup）。
+  画面の遅れのミリ秒側だけ下限を kLatencyMsMin (-200) にした（負は秒 0 のミリ秒側で表す）。
+- 上限は両方 9999ms（kLatencyMsMax / kBluetoothLatencyMsMax）。
+- ダイアログは鍵盤を見ながら合わせるため、ファイラーの側へ寄せて出す（PlaceNextWindowNearFiler。
+  ファイラー矩形の中央を基準に、外側の辺へ貼り付ける）。開き方は [PDX の探索先] と同じ往復。
+- 10 秒ぶんのイベントを溜められるよう DispQueue::kCapacity を 64K → 256K（4MB）。溢れの実測はしていない。

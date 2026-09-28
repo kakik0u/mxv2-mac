@@ -110,13 +110,51 @@ struct Settings {
 	int latencyMs;
 	// 手動指定できる幅。設定ウィンドウのスライダもこの範囲。
 	static const int kLatencyMsMin = -200;
-	static const int kLatencyMsMax = 500;
-	// 自動のとき、出力先が Bluetooth なら足す遅れ (ms)。OS が Bluetooth の
-	// 遅れを教えてくれない環境（Windows）だけで使う。Android は測れる
-	// （outputlatency.h）。既定は BT525 FM で目で合わせた値から
-	// （memo/bluetooth.md）。
-	int bluetoothLatencyMs;
-	static const int kBluetoothLatencyMsMax = 500;
+	// 上限は、[画面の遅れ] ダイアログの「秒」(0〜9) と「ミリ秒」(0〜999) の
+	// 2 本のスライダーで作れる最大の 9999ms（2026-09-28。カーオーディオに 5 秒
+	// 近い遅れがあった。AV アンプ TX-NR676E も電源を入れるたびに 1000ms 以上
+	// 変わった）。
+	static const int kLatencyMsMax = 9999;
+	// 自動のとき、出力先が Bluetooth なら足す遅れ (ms)。**機器ごとに覚える**
+	// （2026-09-28、ユーザーの指示）。測った遅れには受け側の中の遅れ（AV アンプの
+	// 処理など）が入らず、Windows は Bluetooth の遅れそのものも入らない
+	// （outputlatency.h）ので、その差を機器ごとに手で足す。
+	// [Bluetooth] DefaultLatency … 初めてつないだ機器の値。Windows は BT525 FM で
+	//   目で合わせた 80ms、Android は測れるので 0ms（memo/bluetooth.md）。
+	//   Windows は以前の [Bluetooth] Latency・[Play] BluetoothLatency を引き継ぐ。
+	// [Bluetooth] DeviceCount / Device<n> / Device<n>Latency … 機器ごとの値。
+	//   名前は outputlatency::BluetoothName()。
+	// Bluetooth の設定はどれも機器ごとに持つ（2026-09-28、ユーザーの指示。設定
+	// ウィンドウの [Bluetooth（機器名）] は、つないでいる機器のものだけを出す）。
+	// Device<n>Swap / Device<n>Resume も同じ並び。
+	struct BtDevice {
+		std::string name;
+		int latencyMs;
+		// 車などへ渡す曲の情報で、アルバム欄（ふだんはフォルダ名）とアーティスト欄
+		// （ふだんはファイル名）を入れ替える。Android だけ。
+		bool swapArtistAlbum;
+		// Bluetooth が切れて一時停止したあと、この機器がつながり直したら一時停止を
+		// 解く（車のエンジンを切って掛け直したとき）。Android だけ。
+		bool resumeOnReconnect;
+	};
+	int btDefaultLatencyMs;
+	std::vector<BtDevice> btDevices;
+	// 受け側の中の遅れが 5 秒近い機器（カーオーディオ）があるので、[遅延時間]
+	// ダイアログの 2 本のスライダー（秒 0〜9・ミリ秒 0〜999）で作れる 9999ms。
+	// 電源を入れるたびに変わる機器は、利用者がそのつど合わせ直す（ユーザー判断）。
+	static const int kBluetoothLatencyMsMax = 9999;
+	static const int kMaxBtDevices = 32;
+	// 初めてつないだ機器の swapArtistAlbum / resumeOnReconnect。設定ウィンドウには
+	// 出さない。[Bluetooth] DefaultSwapArtistAlbum / DefaultResumeOnReconnect
+	// （機器ごとにする前の SwapArtistAlbum / ResumeOnReconnect を引き継ぐ）。
+	bool btDefaultSwapArtistAlbum;
+	bool btDefaultResumeOnReconnect;
+	// 機器の設定。覚えていなければ既定の値で埋めたもの。
+	BtDevice BluetoothDeviceFor(const std::string &name) const;
+	// 機器の遅延時間。覚えていなければ btDefaultLatencyMs。
+	int BluetoothLatencyFor(const std::string &name) const;
+	// 覚える。数が kMaxBtDevices を超えたら古いもの（先頭）から捨てる。
+	void SetBluetoothDevice(const BtDevice &device);
 
 	// [Path]
 	// PDX の探索先。MDX と同じフォルダで見つからなかったときに、この並び順で
@@ -238,6 +276,7 @@ struct Settings {
 		kFieldUpdateSchedule = 1 << 24,  // [Network] NextUpdateCheck
 		kFieldPip = 1 << 25,             // [Screen] Pip
 		kFieldCast = 1 << 26,            // [Cast] Quality / MuteLocal / VideoAdvanceMs
+		kFieldBluetooth = 1 << 27,       // [Bluetooth] すべて（機器ごとの値と既定の値）
 	};
 
 	Settings();

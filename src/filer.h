@@ -145,6 +145,10 @@ public:
 	bool NextMdx(std::string *playPath);
 	bool PrevMdx(std::string *playPath);
 
+	// 今の一覧で ref が何曲目か（1 から）と、一覧の曲数。一覧に無ければ
+	// （読み込み中・別のフォルダへ移った）false。
+	bool MdxNumberOf(const std::string &ref, int *number, int *count) const;
+
 	// 親ディレクトリへ。ファイルシステムのルートに居るときは
 	// 「ファイルシステムの選択」へ抜ける。
 	void GoParent();
