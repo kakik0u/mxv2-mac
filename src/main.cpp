@@ -113,7 +113,8 @@ void OpenHandedPath(const PlayContext &ctx, mxv2::Filer *filer, bool tutorialAct
 // 時間へ入れる）と終了時（残りを流す）の 2 か所から同じ手順を通す。
 unsigned CollectDirtyFields(mxv2::Settings *settings, mxv2::DrawScreen *draw,
                             mxv2::Player *player, mxv2::Filer *filer, mxv2::Screen *screen,
-                            bool autoNext, bool autoRepeat) {
+                            const std::string &currentPath, bool playing, bool autoNext,
+                            bool autoRepeat) {
 	unsigned dirt = 0;
 	if (settings->fileListFontSize != draw->fileListFontSize()) {
 		settings->fileListFontSize = draw->fileListFontSize();
@@ -126,6 +127,18 @@ unsigned CollectDirtyFields(mxv2::Settings *settings, mxv2::DrawScreen *draw,
 	if (settings->lastDir != filer->currentRef()) {
 		settings->lastDir = filer->currentRef();
 		dirt |= mxv2::Settings::kFieldLastDir;
+	}
+	// 最後に演奏したファイル。演奏を止めても消さない（次の起動でカーソルを合わせる）。
+	if (!currentPath.empty() && settings->lastFile != currentPath) {
+		settings->lastFile = currentPath;
+		dirt |= mxv2::Settings::kFieldLastFile;
+	}
+	// それを鳴らしているか（[動作] の「終了時に演奏していたファイルを次回起動時に
+	// 演奏する」が見る）。一時停止中と、終わった・止めたあとは鳴らしていない扱い。
+	const bool nowPlaying = playing && player->playing() && !player->paused();
+	if (settings->lastPlaying != nowPlaying) {
+		settings->lastPlaying = nowPlaying;
+		dirt |= mxv2::Settings::kFieldLastFile;
 	}
 	if (settings->autoNext != autoNext || settings->autoRepeat != autoRepeat) {
 		settings->autoNext = autoNext;
@@ -390,9 +403,12 @@ int main(int argc, char **argv) {
 	}
 
 	// 対象がファイルならその曲を、ディレクトリならそこを開く。
-	// 対象を省略したときは、前回開いていたディレクトリへ戻る。
-	std::string startDir;   // ref
-	std::string startFile;  // ref
+	// 対象を省略したときは、最後に演奏したファイルの場所を開いてそこにカーソルを
+	// 合わせる（鳴らさない）。それが無くなっていれば、前回開いていたディレクトリへ戻る。
+	std::string startDir;     // ref
+	std::string startFile;    // ref。起動したら鳴らす
+	std::string startCursor;  // ref。カーソルを合わせるだけ
+	std::string lastRef;
 	// 行き先が決まったか。空の ref（ファイルシステムの選択）も決まったうち。
 	bool startFound = false;
 	// Android: ファイルマネージャなどから渡されたものは **URI** で届く
@@ -424,6 +440,20 @@ int main(int argc, char **argv) {
 			startFile = ref;
 			startDir = vfs.Parent(ref);
 		}
+	} else if (!settings.lastFile.empty() &&
+	           vfs.Resolve(settings.lastFile, std::string(), &lastRef) && !lastRef.empty() &&
+	           vfs.Exists(lastRef) && !vfs.IsDir(lastRef)) {
+		// 最後に演奏したファイル（2026-09-28、ユーザーの指示）。無くなっていたら
+		// 記録が無いのと同じ扱いで、下の前回の場所へ回る。終了時に鳴らしていて、
+		// [動作] の「終了時に演奏していたファイルを次回起動時に演奏する」が
+		// 入っていれば鳴らす（startFile）。そうでなければカーソルを合わせるだけ。
+		if (settings.resumePlayOnStart && settings.lastPlaying) {
+			startFile = lastRef;
+		} else {
+			startCursor = lastRef;
+		}
+		startDir = vfs.Parent(lastRef);
+		startFound = true;
 	} else if (!settings.lastDir.empty()) {
 		// 前回開いていた場所。読めない指定（未知の接頭辞など）は未記録と
 		// 同じ扱い。行けなければ 1 つずつ親へ遡り、最後は選択画面へ抜ける。
@@ -761,6 +791,7 @@ int main(int argc, char **argv) {
 	filer.SetViewMetrics(draw.fileListRows(), draw.fileListItemH());
 	filer.SetCurrentRef(startDir);
 	if (!startFile.empty()) filer.SelectByPath(startFile);
+	if (!startCursor.empty()) filer.SelectByPath(startCursor);
 
 	mxv2::Visualizer visualizer(&draw);
 	mxv2::MouseInput mouse(&draw, &filer, &player);
@@ -1348,8 +1379,8 @@ int main(int argc, char **argv) {
 		// 設定 UI はここで組み立てる。配色を変えると 640x480 の
 		// オフスクリーンを作り直すので、下の描画より先に回す。
 		// キー操作でも変わる項目は、UI を開く前に拾っておく。
-		unsigned newDirt = CollectDirtyFields(&settings, &draw, &player, &filer, &screen, autoNext,
-		                                       autoRepeat);
+		unsigned newDirt = CollectDirtyFields(&settings, &draw, &player, &filer, &screen,
+		                                       currentPath, playing, autoNext, autoRepeat);
 		ui.SetOrientationState(orientEnabled, orientNow);
 		ui.SetUpdateCheckState(updateAvailable, updateChecker.running());
 		ui.Build(&settings, &draw, &player, &filer, &screen);
@@ -1562,8 +1593,8 @@ int main(int argc, char **argv) {
 	// 変わっていない項目は触らないので、-nofade のようなコマンドラインの
 	// 一時指定が residue として ini に残ることはない。
 	{
-		dirtyFields |= CollectDirtyFields(&settings, &draw, &player, &filer, &screen, autoNext,
-		                                  autoRepeat);
+		dirtyFields |= CollectDirtyFields(&settings, &draw, &player, &filer, &screen, currentPath,
+		                                  playing, autoNext, autoRepeat);
 		if (!settings.SaveFields(settingsPath, dirtyFields)) {
 			printf("warning  : %s\n",
 			       mxv2::MsgF("Log.SettingsSaveFailed", settingsPath).c_str());

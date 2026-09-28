@@ -62,6 +62,8 @@ Settings::Settings()
       fileListFontSize(0),
       folderFirst(false),
       fileListScroll(kScrollCursor),
+      lastPlaying(false),
+      resumePlayOnStart(false),
       sampleRate(48000),
       loops(2),
       fadeout(true),
@@ -130,6 +132,10 @@ bool Settings::Load(const std::string &path) {
 		fileListScroll = kScrollCursor;
 	}
 	lastDir = ini.GetString("Filer", "LastDir", lastDir);
+	lastFile = ini.GetString("Filer", "LastFile", lastFile);
+	lastPlaying = ini.GetInt("Filer", "LastPlaying", lastPlaying ? 1 : 0) != 0;
+	resumePlayOnStart =
+	    ini.GetInt("Behavior", "ResumePlayOnStart", resumePlayOnStart ? 1 : 0) != 0;
 
 	sampleRate = ini.GetInt("Play", "SampleRate", sampleRate);
 	loops = ini.GetInt("Play", "N_Loop", loops);
@@ -287,6 +293,9 @@ bool Settings::Save(const std::string &path) const {
 	ini.SetInt("Filer", "FolderFirst", folderFirst ? 1 : 0);
 	ini.SetInt("Filer", "TitleScroll", fileListScroll);
 	ini.SetString("Filer", "LastDir", lastDir);
+	ini.SetString("Filer", "LastFile", lastFile);
+	ini.SetInt("Filer", "LastPlaying", lastPlaying ? 1 : 0);
+	ini.SetInt("Behavior", "ResumePlayOnStart", resumePlayOnStart ? 1 : 0);
 
 	ini.SetInt("Play", "SampleRate", sampleRate);
 	ini.SetInt("Play", "N_Loop", loops);
@@ -433,6 +442,11 @@ bool Settings::SaveFields(const std::string &path, unsigned fields) const {
 	if (fields & kFieldFolderFirst) out.folderFirst = folderFirst;
 	if (fields & kFieldFileListScroll) out.fileListScroll = fileListScroll;
 	if (fields & kFieldLastDir) out.lastDir = lastDir;
+	if (fields & kFieldLastFile) {
+		out.lastFile = lastFile;
+		out.lastPlaying = lastPlaying;
+	}
+	if (fields & kFieldResumePlay) out.resumePlayOnStart = resumePlayOnStart;
 	if (fields & kFieldSampleRate) out.sampleRate = sampleRate;
 	if (fields & kFieldLoops) out.loops = loops;
 	if (fields & kFieldFadeout) out.fadeout = fadeout;

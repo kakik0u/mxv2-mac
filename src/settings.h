@@ -88,6 +88,17 @@ struct Settings {
 		kScrollAll = 2,     // 全て
 	};
 	std::string lastDir;  // 最後に開いていたディレクトリ
+	// 最後に演奏したファイル (ref)。対象を省略して起動したとき、その場所を開いて
+	// このファイルにカーソルを合わせる（鳴らしはしない）。無くなっていれば
+	// 記録が無いのと同じ扱いで lastDir から始める（2026-09-28、ユーザーの指示）。
+	// ini は [Filer] LastFile。
+	std::string lastFile;
+	// lastFile を鳴らしていたか（一時停止中・止めたあとは false）。[Filer] LastPlaying。
+	// resumePlayOnStart が入っていて、これが true なら次の起動で lastFile を鳴らす。
+	bool lastPlaying;
+	// [Behavior] ResumePlayOnStart。終了時に演奏していたファイルを次回起動時に
+	// 演奏する（2026-09-28、ユーザーの指示）。対象を指定して起動したときは関係ない。
+	bool resumePlayOnStart;
 
 	// [Play]
 	// 出力サンプリングレート。既定は 48000 で、x68sound が 96kHz に対応して
@@ -254,6 +265,8 @@ struct Settings {
 		kFieldFontSize = 1 << 3,
 		kFieldFolderFirst = 1 << 4,
 		kFieldLastDir = 1 << 5,
+		kFieldLastFile = 1 << 28,        // [Filer] LastFile / LastPlaying
+		kFieldResumePlay = 1 << 29,      // [Behavior] ResumePlayOnStart
 		kFieldLoops = 1 << 6,
 		kFieldFadeout = 1 << 7,
 		kFieldVolume = 1 << 8,

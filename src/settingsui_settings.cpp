@@ -721,6 +721,13 @@ void SettingsUi::BuildSettingsWindow(Settings *settings, DrawScreen *draw, Playe
 			settings->tutorialDone = !showTutorial;
 			changedFields_ |= Settings::kFieldTutorial;
 		}
+		// 対象を指定せずに起動したとき、終了時に鳴らしていた曲を鳴らす（入れて
+		// いなければカーソルを合わせるだけ。2026-09-28、ユーザーの指示）。
+		bool resumePlay = settings->resumePlayOnStart;
+		if (ImGui::Checkbox(Msg("Settings.ResumePlayOnStart"), &resumePlay)) {
+			settings->resumePlayOnStart = resumePlay;
+			changedFields_ |= Settings::kFieldResumePlay;
+		}
 		GroupTrailingSpace();
 	}
 
