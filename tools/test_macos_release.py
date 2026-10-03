@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import zipfile
+from urllib.parse import parse_qs, urlsplit
 
 import macos_draft_release as release
 
@@ -32,6 +33,61 @@ class IsolatedEnvironmentTests(unittest.TestCase):
         capture = contextlib.redirect_stdout(self.test_stdout)
         capture.__enter__()
         self.addCleanup(capture.__exit__, None, None, None)
+
+
+class ReleaseApiMock:
+    def __init__(self):
+        self.release = dict(id=42, tag_name=TAG, name='mxv2 macOS ' + TAG, draft=True,
+                            target_commitish=SHA, html_url='https://example.test/draft', assets=[],
+                            upload_url='https://uploads.github.com/repos/test/repo/releases/42/assets{?name,label}')
+        self.payload = None
+        self.uploads = []
+        self.deleted = []
+        self.list_calls = 0
+        self.publish_on_get = False
+        self.upload_state = 'uploaded'
+
+    def __call__(self, *arguments):
+        if arguments[0] != 'api':
+            raise AssertionError('Release operations must use API IDs, not tag-based CLI commands')
+        endpoint = arguments[1]
+        method = arguments[arguments.index('--method') + 1] if '--method' in arguments else 'GET'
+        headers = [arguments[index + 1] for index, argument in enumerate(arguments) if argument == '--header']
+        if endpoint == 'repos/{owner}/{repo}/releases?per_page=100':
+            self.list_calls += 1
+            # 作成直後も一覧には反映されない状態を再現する。
+            return '[[]]'
+        if endpoint == 'repos/{owner}/{repo}/releases' and method == 'POST':
+            if 'Content-Type: application/json' not in headers:
+                raise AssertionError('Release creation must send a JSON body')
+            self.payload = json.loads(Path(arguments[arguments.index('--input') + 1]).read_text())
+            return json.dumps(self.release)
+        if endpoint == 'repos/{owner}/{repo}/releases/42' and method == 'GET':
+            if self.publish_on_get:
+                self.release['draft'] = False
+            return json.dumps(self.release)
+        if endpoint.startswith('repos/{owner}/{repo}/releases/assets/') and method == 'DELETE':
+            identifier = int(endpoint.rsplit('/', 1)[1])
+            self.deleted.append(identifier)
+            self.release['assets'] = [asset for asset in self.release['assets'] if asset['id'] != identifier]
+            return ''
+        if endpoint.startswith('https://uploads.github.com/') and method == 'POST':
+            self.assert_upload_path(endpoint)
+            path = Path(arguments[arguments.index('--input') + 1])
+            if 'Content-Length: ' + str(path.stat().st_size) not in headers:
+                raise AssertionError('Asset upload must specify its binary byte length')
+            content_type = arguments[arguments.index('--header') + 1]
+            self.uploads.append((path.name, content_type))
+            asset = dict(id=1000 + len(self.uploads), name=path.name,
+                         size=path.stat().st_size, state=self.upload_state)
+            self.release['assets'].append(asset)
+            return json.dumps(asset)
+        raise AssertionError('Unexpected API request: ' + repr(arguments))
+
+    def assert_upload_path(self, endpoint):
+        parts = urlsplit(endpoint)
+        if parts.path != '/repos/test/repo/releases/42/assets' or not parse_qs(parts.query).get('name'):
+            raise AssertionError('Asset was not uploaded to the returned Release ID')
 
 
 class DraftReleaseTests(IsolatedEnvironmentTests):
@@ -84,25 +140,86 @@ class DraftReleaseTests(IsolatedEnvironmentTests):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.assets(root)
-            item = dict(html_url='https://example.test/draft', draft=True, target_commitish=SHA)
-            with patch.object(release, 'check_target', side_effect=[None, item]), \
-                    patch.object(release, 'gh', return_value='') as gh:
+            api = ReleaseApiMock()
+            with patch.object(release, 'check_target', return_value=None), \
+                    patch.object(release, 'gh', side_effect=api):
                 release.create_draft(TAG, SHA, root)
-            create, upload = [call.args for call in gh.call_args_list]
-            self.assertIn('--draft', create)
-            self.assertEqual(create[create.index('--target') + 1], SHA)
-            self.assertEqual(upload[:3], ('release', 'upload', TAG))
-            self.assertEqual(len(upload[3:-1]), 4)
+            self.assertTrue(api.payload['draft'])
+            self.assertEqual(api.payload['target_commitish'], SHA)
+            self.assertEqual(api.payload['tag_name'], TAG)
+            self.assertEqual(len(api.uploads), 4)
+            self.assertEqual(api.uploads[0][1], 'Content-Type: application/zip')
+            self.assertEqual(api.uploads[1][1], 'Content-Type: text/plain')
+
+    def test_untagged_draft_and_delayed_list_use_creation_id(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.assets(root)
+            api = ReleaseApiMock()
+            api.release['tag_name'] = 'untagged-7f3db5af5636476db038'
+            api.release['html_url'] = 'https://example.test/releases/tag/' + api.release['tag_name']
+            responses = [subprocess.CompletedProcess([], 0), subprocess.CompletedProcess([], 1, stdout='')]
+            with patch.object(release.subprocess, 'run', side_effect=responses), \
+                    patch.object(release, 'gh', side_effect=api):
+                release.create_draft(TAG, SHA, root)
+            self.assertEqual(api.list_calls, 1, 'Creation must not depend on listing the new draft')
+            self.assertEqual(len(api.uploads), 4)
+
+    def test_existing_untagged_draft_matches_requested_title(self):
+        api = ReleaseApiMock()
+        api.release['tag_name'] = 'untagged-7f3db5af5636476db038'
+        self.assertEqual(self.target(api.release), api.release)
+
+    def test_existing_draft_replaces_only_matching_asset_by_id(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.assets(root)
+            api = ReleaseApiMock()
+            api.release['assets'] = [dict(id=7, name='mxv2-macos-arm64-notarized.zip'),
+                                     dict(id=8, name='other-platform.zip')]
+            with patch.object(release, 'check_target', return_value=api.release), \
+                    patch.object(release, 'gh', side_effect=api):
+                release.create_draft(TAG, SHA, root)
+            self.assertIsNone(api.payload, 'Existing draft must not be duplicated')
+            self.assertEqual(api.deleted, [7])
+            self.assertIn('other-platform.zip', [asset['name'] for asset in api.release['assets']])
 
     def test_draft_published_during_run_is_rejected_before_upload(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.assets(root)
-            with patch.object(release, 'check_target', side_effect=[None, ValueError('already published')]), \
-                    patch.object(release, 'gh', return_value='') as gh:
-                with self.assertRaises(ValueError):
+            api = ReleaseApiMock()
+            api.publish_on_get = True
+            with patch.object(release, 'check_target', return_value=None), \
+                    patch.object(release, 'gh', side_effect=api):
+                with self.assertRaisesRegex(ValueError, 'already published'):
                     release.create_draft(TAG, SHA, root)
-            self.assertEqual(gh.call_count, 1)
+            self.assertEqual(api.uploads, [])
+            self.assertEqual(api.deleted, [])
+
+    def test_incomplete_upload_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.assets(root)
+            api = ReleaseApiMock()
+            api.upload_state = 'starter'
+            with patch.object(release, 'check_target', return_value=api.release), \
+                    patch.object(release, 'gh', side_effect=api):
+                with self.assertRaisesRegex(ValueError, 'incomplete'):
+                    release.create_draft(TAG, SHA, root)
+
+    def test_unexpected_upload_host_prevents_sending_assets(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.assets(root)
+            api = ReleaseApiMock()
+            api.release['upload_url'] = 'https://example.test/repos/test/repo/releases/42/assets'
+            with patch.object(release, 'check_target', return_value=api.release), \
+                    patch.object(release, 'gh', side_effect=api):
+                with self.assertRaisesRegex(ValueError, 'Unexpected'):
+                    release.create_draft(TAG, SHA, root)
+            self.assertEqual(api.uploads, [])
+            self.assertEqual(api.deleted, [])
 
     def test_summary_uses_only_explicit_test_file(self):
         self.assertNotIn('GITHUB_STEP_SUMMARY', os.environ)
@@ -110,10 +227,10 @@ class DraftReleaseTests(IsolatedEnvironmentTests):
             root = Path(temporary)
             self.assets(root)
             summary = root / 'test-summary.md'
-            item = dict(html_url='https://example.test/draft', draft=True, target_commitish=SHA)
+            api = ReleaseApiMock()
             with patch.dict(os.environ, GITHUB_STEP_SUMMARY=str(summary)), \
-                    patch.object(release, 'check_target', return_value=item), \
-                    patch.object(release, 'gh', return_value=''):
+                    patch.object(release, 'check_target', return_value=api.release), \
+                    patch.object(release, 'gh', side_effect=api):
                 release.create_draft(TAG, SHA, root)
             self.assertIn('https://example.test/draft', summary.read_text())
             self.assertIn(SHA, summary.read_text())
