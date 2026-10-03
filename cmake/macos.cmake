@@ -40,7 +40,15 @@ set_source_files_properties("${_mxv2_icon}" PROPERTIES MACOSX_PACKAGE_LOCATION R
 target_sources(mxv2 PRIVATE "${_mxv2_icon}")
 
 # 静的 SDL2 のライセンスもアプリと一緒に届ける。
+set(MXV2_MACOS_LICENSE_OUTPUT "${MXV2_GENERATED_DIR}/macos-LICENSE")
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos_license.cmake")
+# 原文更新時も configure / link をやり直し、POST_BUILD の同梱を更新する。
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+	${MXV2_MACOS_LICENSE_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos_license.cmake")
+set_property(TARGET mxv2 APPEND PROPERTY LINK_DEPENDS "${MXV2_MACOS_LICENSE_OUTPUT}")
 add_custom_command(TARGET mxv2 POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy_if_different
+		"${MXV2_MACOS_LICENSE_OUTPUT}" "${MXV2_RESOURCE_DIR}/LICENSE"
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
 		"${SDL2_SRC_ROOT}/LICENSE.txt" "${MXV2_RESOURCE_DIR}/SDL2-LICENSE.txt"
 	VERBATIM

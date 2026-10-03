@@ -71,6 +71,9 @@ jobs:
         run: |
           cmake --install build/macos --prefix dist
           plutil -lint dist/mxv2.app/Contents/Info.plist
+          cmake -DMXV2_MACOS_LICENSE_VERIFY_ONLY=ON \
+            -DMXV2_MACOS_LICENSE_OUTPUT=dist/mxv2.app/Contents/Resources/LICENSE \
+            -P cmake/macos_license.cmake
           codesign --force --sign - dist/mxv2.app
           codesign --verify --strict --verbose=2 dist/mxv2.app
           ditto -c -k --sequesterRsrc --keepParent \

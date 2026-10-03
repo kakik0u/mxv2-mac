@@ -607,6 +607,12 @@ NOTICE、ライセンス、README、アイコンが入る。素材パスは Coco
 `~/Library/Application Support/mxv2/` に保存する。
 macOS の bundle identifier は `app.kakikou.mxv2-mac`（`MXV2_MACOS_BUNDLE_ID` で変更可）。
 
+macOS 配布用の `Contents/Resources/LICENSE` は `cmake/macos_license.cmake` で
+生成する。本体の Apache 2.0 と NOTICE、SDL2 と内部の yuv2rgb / HIDAPI / fdlibm、
+ImGui、portable_mdx、同梱フォントのライセンス・著作権表示を原文からまとめる。
+通常ビルド・公証ビルドの Actions は、インストール後に全文を照合してから署名する。
+リポジトリ直下の `LICENSE` は本体の Apache 2.0 のまま保持する。
+
 `tools/test_macos.py` は別の場所へ `.app` をコピーし、日本語と空白を含むパスで
 起動・素材読込み・設定保存・SDL の非無音 PCM 出力を確認する。
 合成した短い FM 音で `mxv2_chunktest` の波形一致も確認する。

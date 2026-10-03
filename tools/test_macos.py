@@ -47,6 +47,11 @@ def main():
                      "assets/MPLUS1p-Regular.ttf", "assets/MPLUS1p-OFL.txt",
                      "assets/locale/ja-JP/message.ini", "assets/skin/Default/back.bmp"):
         assert (bundle / "Contents/Resources" / resource).is_file(), resource
+    license_text = (bundle / "Contents/Resources/LICENSE").read_text(encoding="utf-8")
+    for notice in ("Apache License", "Omar Cornut", "Adrien Descamps", "Alan Ott",
+                   "Sun Microsystems", "Yosshin",
+                   "SIL OPEN FONT LICENSE"):
+        assert notice in license_text, "Missing bundled license notice: " + notice
     binary = bundle / "Contents/MacOS/mxv2"
     linked = run(["otool", "-L", str(binary)])
     for line in linked.splitlines()[1:]:
