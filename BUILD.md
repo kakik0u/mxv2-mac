@@ -630,3 +630,19 @@ Intel (`macos-15-intel`) のそれぞれで同じ依存取得・Release ビル�
 
 パッケージ化前にアドホック署名を施し、署名を検証してから `ditto` で ZIP を作る。
 Developer ID の署名・Apple の公証は行わず、署名秘密鍵も必要としない。
+
+### 手動の署名・公証版と Draft Release
+
+`.github/workflows/release-macos-notarized.yml` は上記のビルドに加え公証付きのビルドを生成します。
+
+必要なSecret:
+
+| Secret                        | 内容                                                                        |
+| ----------------------------- | --------------------------------------------------------------------------- |
+| `MACOS_CERTIFICATE_BASE64`    | Developer ID Application の証明書と秘密鍵を含む `.p12` を Base64 にしたもの |
+| `MACOS_CERTIFICATE_PASSWORD`  | `.p12` の書き出しパスワード                                                 |
+| `APPLE_ID`                    | Apple Developer アカウントのメールアドレス                                  |
+| `APPLE_APP_SPECIFIC_PASSWORD` | 公証申請用のアプリ用パスワード（通常のログインパスワードではない）          |
+| `APPLE_TEAM_ID`               | 上記署名証明書に対応する Developer Team ID                                  |
+
+成果物は `mxv2-macos-arm64-notarized.zip` / `mxv2-macos-x86_64-notarized.zip`

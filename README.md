@@ -20,10 +20,9 @@ PDXファイルは、MDXと同じフォルダか、[mxv2 の設定]ダイアロ�
 
 ## macOSの実行方法
 
-macOS 11 以降に対応しています。GitHub Actions から自分のMacに合う
-`mxv2-macos-arm64.zip`（Apple Silicon）または `mxv2-macos-x86_64.zip`（Intel）を
+macOS 11 以降に対応しています。Release から自分のMacに合う
+`mxv2-macos-arm64-notarized.zip`（Apple Silicon）または `mxv2-macos-x86_64-notarized.zip`（Intel）を
 DL/展開し、`mxv2.app` をアプリケーションフォルダなどへコピーして起動します。
-公証をしていないので、`xattr -d com.apple.quarantine mxv2.app` を実行する必要があるかも...?
 
 MDX はウィンドウにドラッグ＆ドロップするか、Finder の「このアプリケーションで開く」から
 `mxv2.app` を選んで再生できます。PDX は MDX と同じフォルダか、設定の [PDX の探索先] に
