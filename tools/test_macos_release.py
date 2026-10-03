@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """秘密鍵や実際の Apple/GitHub API を使わず、公開防止と失敗時の後始末を検証。"""
 import base64
+import contextlib
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -19,7 +21,20 @@ TAG = 'macos-test'
 TOOLS = Path(__file__).resolve().parent
 
 
-class DraftReleaseTests(unittest.TestCase):
+class IsolatedEnvironmentTests(unittest.TestCase):
+    def setUp(self):
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        # runner の本物の summary を引き継ぐと合成 Draft 情報が書かれてしまう。
+        os.environ.pop('GITHUB_STEP_SUMMARY', None)
+        self.test_stdout = io.StringIO()
+        capture = contextlib.redirect_stdout(self.test_stdout)
+        capture.__enter__()
+        self.addCleanup(capture.__exit__, None, None, None)
+
+
+class DraftReleaseTests(IsolatedEnvironmentTests):
     def assets(self, root):
         for arch in ('arm64', 'x86_64'):
             name = f'mxv2-macos-{arch}-notarized.zip'
@@ -89,6 +104,20 @@ class DraftReleaseTests(unittest.TestCase):
                     release.create_draft(TAG, SHA, root)
             self.assertEqual(gh.call_count, 1)
 
+    def test_summary_uses_only_explicit_test_file(self):
+        self.assertNotIn('GITHUB_STEP_SUMMARY', os.environ)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.assets(root)
+            summary = root / 'test-summary.md'
+            item = dict(html_url='https://example.test/draft', draft=True, target_commitish=SHA)
+            with patch.dict(os.environ, GITHUB_STEP_SUMMARY=str(summary)), \
+                    patch.object(release, 'check_target', return_value=item), \
+                    patch.object(release, 'gh', return_value=''):
+                release.create_draft(TAG, SHA, root)
+            self.assertIn('https://example.test/draft', summary.read_text())
+            self.assertIn(SHA, summary.read_text())
+
 
 # 外部コマンドを差し替えて実際のシェルを実行する。秘密情報は合成値のみ。
 MOCK_COMMAND = r'''#!/usr/bin/env python3
@@ -101,8 +130,21 @@ with open(os.environ['MOCK_CALLS'], 'a') as out:
 if command == 'security':
     if args[0] == 'create-keychain': Path(args[-1]).touch()
     elif args[0] == 'delete-keychain': Path(args[-1]).unlink(missing_ok=True)
+    elif args[0] == 'list-keychains':
+        search_list = Path(os.environ['MOCK_SEARCH_LIST'])
+        if '-s' in args:
+            search_list.write_text(json.dumps(args[args.index('-s') + 1:]))
+        else:
+            for keychain in json.loads(search_list.read_text()): print('    ' + json.dumps(keychain))
     elif args[0] == 'find-identity':
         print('1) ' + 'A' * 40 + ' "Developer ID Application: CI Test (ABCDEFGHIJ)"')
+elif command == 'codesign' and '--sign' in args:
+    keychain = args[args.index('--keychain') + 1]
+    search_list = json.loads(Path(os.environ['MOCK_SEARCH_LIST']).read_text())
+    if keychain not in search_list:
+        print('error: The specified item could not be found in the keychain.', file=sys.stderr)
+        sys.exit(1)
+    sys.exit(int(os.environ.get('MOCK_CODESIGN_EXIT', '0')))
 elif command == 'curl':
     Path(args[args.index('--output') + 1]).write_bytes(b'public test certificate')
 elif command == 'xcrun':
@@ -126,8 +168,8 @@ elif command == 'spctl':
 '''
 
 
-class NotarizationTests(unittest.TestCase):
-    def check_flow(self, status='Accepted', submit_exit=0, spctl_exit=0):
+class NotarizationTests(IsolatedEnvironmentTests):
+    def check_flow(self, status='Accepted', submit_exit=0, spctl_exit=0, codesign_exit=0):
         with tempfile.TemporaryDirectory(prefix='mxv2-notary-test-') as temporary:
             root = Path(temporary)
             app = root / 'Test app.app'
@@ -141,8 +183,12 @@ class NotarizationTests(unittest.TestCase):
             mock.chmod(0o700)
             for name in ('security', 'curl', 'codesign', 'xcrun', 'ditto', 'spctl'):
                 (mock_bin / name).symlink_to(mock)
+            search_list = root / 'search-list.json'
+            original_keychains = [str(root / 'Original signing.keychain-db'), str(root / 'login.keychain-db')]
+            search_list.write_text(json.dumps(original_keychains))
             env = dict(os.environ, PATH=str(mock_bin) + os.pathsep + os.environ['PATH'],
                        RUNNER_TEMP=str(root), MOCK_CALLS=str(root / 'calls'),
+                       MOCK_SEARCH_LIST=str(search_list), MOCK_CODESIGN_EXIT=str(codesign_exit),
                        MACOS_CERTIFICATE_BASE64=base64.b64encode(b'test p12').decode(),
                        MACOS_CERTIFICATE_PASSWORD='synthetic password', APPLE_ID='ci@example.test',
                        APPLE_APP_SPECIFIC_PASSWORD='synthetic app password', APPLE_TEAM_ID='ABCDEFGHIJ',
@@ -152,9 +198,11 @@ class NotarizationTests(unittest.TestCase):
                                     env=env, text=True, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, timeout=15)
             self.assertEqual(list(root.glob('mxv2-signing.*')), [], 'Signing material must be removed')
+            self.assertEqual(json.loads(search_list.read_text()), original_keychains,
+                             'Original keychain search list must be restored')
             archive = output / 'mxv2-macos-arm64-notarized.zip'
             calls = (root / 'calls').read_text()
-            if status == 'Accepted' and submit_exit == 0 and spctl_exit == 0:
+            if status == 'Accepted' and submit_exit == 0 and spctl_exit == 0 and codesign_exit == 0:
                 self.assertEqual(result.returncode, 0, result.stdout)
                 with zipfile.ZipFile(archive) as zipped:
                     self.assertIn('Test app.app/ticket', zipped.namelist())
@@ -178,6 +226,9 @@ class NotarizationTests(unittest.TestCase):
 
     def test_gatekeeper_failure_prevents_package(self):
         self.check_flow(spctl_exit=1)
+
+    def test_signing_failure_restores_search_list_and_removes_keychain(self):
+        self.check_flow(codesign_exit=1)
 
 
 if __name__ == '__main__':

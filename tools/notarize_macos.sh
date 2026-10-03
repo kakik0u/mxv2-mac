@@ -20,6 +20,15 @@ mkdir -p "$output_dir"
 signing_temp=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/mxv2-signing.XXXXXX")
 signing_keychain="$signing_temp/signing.keychain-db"
 cleanup() {
+	# codesign の検索対象はユーザー設定なので、削除前に元の一覧へ戻す。
+	if [[ -f "$signing_temp/previous-keychains.txt" ]]; then
+		python3 - "$signing_temp/previous-keychains.txt" <<'PY' || echo 'Warning: could not restore keychain search list' >&2
+import shlex, subprocess, sys
+from pathlib import Path
+keychains = shlex.split(Path(sys.argv[1]).read_text())
+subprocess.run(['security', 'list-keychains', '-d', 'user', '-s', *keychains], check=True)
+PY
+	fi
 	security delete-keychain "$signing_keychain" >/dev/null 2>&1 || true
 	rm -rf "$signing_temp"
 }
@@ -27,11 +36,21 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+security list-keychains -d user > "$signing_temp/previous-keychains.txt"
 printf '%s' "$MACOS_CERTIFICATE_BASE64" | base64 --decode > "$signing_temp/certificate.p12"
 keychain_password=$(openssl rand -hex 32)
 security create-keychain -p "$keychain_password" "$signing_keychain"
 security set-keychain-settings -lut 7200 "$signing_keychain"
 security unlock-keychain -p "$keychain_password" "$signing_keychain"
+# --keychain で identity を指定しても、証明書チェーンの構築には検索一覧が必要。
+# 既存キーチェーンを保ちながら一時キーチェーンを先頭へ登録する。
+python3 - "$signing_temp/previous-keychains.txt" "$signing_keychain" <<'PY'
+import shlex, subprocess, sys
+from pathlib import Path
+keychains = shlex.split(Path(sys.argv[1]).read_text())
+subprocess.run(['security', 'list-keychains', '-d', 'user', '-s', sys.argv[2], *keychains], check=True)
+PY
+echo 'Importing signing identity and configuring private-key access'
 security import "$signing_temp/certificate.p12" -k "$signing_keychain" \
 	-P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
 security set-key-partition-list -S apple-tool:,apple:,codesign: \
@@ -44,6 +63,7 @@ for certificate in DeveloperIDCA DeveloperIDG2CA; do
 		"https://www.apple.com/certificateauthority/$certificate.cer"
 	security import "$signing_temp/$certificate.cer" -k "$signing_keychain"
 done
+echo 'Checking Developer ID Application identity'
 security find-identity -v -p codesigning "$signing_keychain" > "$signing_temp/identities.txt"
 signing_identity=$(python3 - "$signing_temp/identities.txt" <<'PY'
 import os, re, sys
@@ -57,6 +77,7 @@ print(identities[0])
 PY
 )
 rm "$signing_temp/certificate.p12"
+echo 'Signing app with Developer ID Application'
 codesign --force --sign "$signing_identity" --keychain "$signing_keychain" \
 	--options runtime --timestamp "$app_path"
 codesign --verify --strict --verbose=2 "$app_path"
