@@ -53,6 +53,10 @@
 #include "keybind.h"
 #include "playctl.h"
 
+#ifdef MXV2_UITEST
+#include "uitest.h"  // tools/uitest.h（テスト用のビルド mxv2_uitest のときだけ）
+#endif
+
 using namespace mxv2::app;
 
 namespace {
@@ -74,11 +78,11 @@ const long long kUpdateIntervalSec = 24 * 60 * 60;
 // 除く）ので、ここが唯一の手掛かりになる。
 void LogUpdateResult(const mxv2::UpdateResult &r) {
 	switch (r.status) {
-		case mxv2::UpdateResult::kNewer:
+		case mxv2::UpdateResult::Status::Newer:
 			printf("update   : %s\n",
 			       mxv2::MsgF("Log.UpdateNewer", r.latest, MXV2_APP_VERSION).c_str());
 			break;
-		case mxv2::UpdateResult::kLatest:
+		case mxv2::UpdateResult::Status::Latest:
 			printf("update   : %s\n",
 			       mxv2::MsgF("Log.UpdateLatest", r.latest, MXV2_APP_VERSION).c_str());
 			break;
@@ -94,7 +98,7 @@ void LogUpdateResult(const mxv2::UpdateResult &r) {
 // **チュートリアル中は受け取らない**（2026-09-18、ユーザーの指示）。案内は
 // 画面の状態を見て進むので、途中で曲や場所が変わると筋が合わなくなる。
 // 受け取らなかったことはログに 1 行出すだけで、**あとで開き直したりはしない**。
-// 2 つめから渡されたときに窓を前面へ出すのは受け取った時点で済んでいるので、
+// 2 つめから渡されたときにウィンドウを前面へ出すのは受け取った時点で済んでいるので、
 // ここは捨てるだけでよい（落とされたぶんは、そもそも前面に居る）。
 void OpenHandedPath(const PlayContext &ctx, mxv2::Filer *filer, bool tutorialActive,
                     const std::string &path) {
@@ -108,7 +112,7 @@ void OpenHandedPath(const PlayContext &ctx, mxv2::Filer *filer, bool tutorialAct
 }
 
 // キー・マウス・メニューのどこからでも変わる項目（文字の大きさ・音量・
-// 今の場所・CONT / REPEAT・窓の位置）を設定と見比べて、変わっていれば
+// 今の場所・CONT / REPEAT・ウィンドウの位置）を設定と見比べて、変わっていれば
 // 設定に写す。返すのは変わった項目のビット和。フレームごと（保存の待ち
 // 時間へ入れる）と終了時（残りを流す）の 2 か所から同じ手順を通す。
 unsigned CollectDirtyFields(mxv2::Settings *settings, mxv2::DrawScreen *draw,
@@ -118,55 +122,56 @@ unsigned CollectDirtyFields(mxv2::Settings *settings, mxv2::DrawScreen *draw,
 	unsigned dirt = 0;
 	if (settings->fileListFontSize != draw->fileListFontSize()) {
 		settings->fileListFontSize = draw->fileListFontSize();
-		dirt |= mxv2::Settings::kFieldFontSize;
+		dirt |= mxv2::Settings::Field::FontSize;
 	}
 	if (settings->masterVolume != player->masterVolume()) {
 		settings->masterVolume = player->masterVolume();
-		dirt |= mxv2::Settings::kFieldVolume;
+		dirt |= mxv2::Settings::Field::Volume;
 	}
 	if (settings->lastDir != filer->currentRef()) {
 		settings->lastDir = filer->currentRef();
-		dirt |= mxv2::Settings::kFieldLastDir;
+		dirt |= mxv2::Settings::Field::LastDir;
 	}
 	// 最後に演奏したファイル。演奏を止めても消さない（次の起動でカーソルを合わせる）。
 	if (!currentPath.empty() && settings->lastFile != currentPath) {
 		settings->lastFile = currentPath;
-		dirt |= mxv2::Settings::kFieldLastFile;
+		dirt |= mxv2::Settings::Field::LastFile;
 	}
 	// それを鳴らしているか（[動作] の「終了時に演奏していたファイルを次回起動時に
 	// 演奏する」が見る）。一時停止中と、終わった・止めたあとは鳴らしていない扱い。
 	const bool nowPlaying = playing && player->playing() && !player->paused();
 	if (settings->lastPlaying != nowPlaying) {
 		settings->lastPlaying = nowPlaying;
-		dirt |= mxv2::Settings::kFieldLastFile;
+		dirt |= mxv2::Settings::Field::LastFile;
 	}
 	if (settings->autoNext != autoNext || settings->autoRepeat != autoRepeat) {
 		settings->autoNext = autoNext;
 		settings->autoRepeat = autoRepeat;
-		dirt |= mxv2::Settings::kFieldContRepeat;
+		dirt |= mxv2::Settings::Field::ContRepeat;
 	}
 	// フルスクリーンは [Screen] FullScreen に覚える。Alt+Enter でも設定
 	// ダイアログでも、最後の状態がそのまま次の起動になる。
 	if (mxv2::Screen::CanFullScreen() && settings->fullScreen != screen->fullScreen()) {
 		settings->fullScreen = screen->fullScreen();
-		dirt |= mxv2::Settings::kFieldFullScreen;
+		dirt |= mxv2::Settings::Field::FullScreen;
 	}
 	// 最小化したまま終えたかを覚える（旧 mxv の [Position] Iconic）。
 	if (settings->windowIconic != screen->minimized()) {
 		settings->windowIconic = screen->minimized();
-		dirt |= mxv2::Settings::kFieldWindowPos;
+		dirt |= mxv2::Settings::Field::WindowPos;
 	}
 	// 最大化したまま終えたかを覚える。**最小化中とフルスクリーン中は見ない**
-	// ——どちらも SDL の最大化の旗が落ちるので、そのまま写すと
+	// ——どちらもアプリケーションウィンドウ（SDL_Window）の最大化のフラグが
+	// 落ちるので、そのまま写すと
 	// 「最大化したまま最小化して終了」で最大化を忘れてしまう。
 	if (!screen->minimized() && !screen->fullScreen() &&
 		settings->windowMaximized != screen->maximized()) {
 		settings->windowMaximized = screen->maximized();
-		dirt |= mxv2::Settings::kFieldWindowPos;
+		dirt |= mxv2::Settings::Field::WindowPos;
 	}
-	// 窓の位置と大きさは**普通の窓のときだけ**見る。フルスクリーン・最大化は
+	// ウィンドウの位置と大きさは**普通のウィンドウのときだけ**見る。フルスクリーン・最大化は
 	// 画面いっぱいの形を、最小化は (-32000,-32000) を覚えてしまうし、
-	// 最大化をやめたときに戻る場所は「その前の普通の窓」であってほしい。
+	// 最大化をやめたときに戻る場所は「その前の普通のウィンドウ」であってほしい。
 	if (!screen->fullScreen() && !screen->minimized() && !screen->maximized()) {
 		int wx = 0, wy = 0, ww = 0, wh = 0;
 		screen->GetWindowRect(&wx, &wy, &ww, &wh);
@@ -176,7 +181,7 @@ unsigned CollectDirtyFields(mxv2::Settings *settings, mxv2::DrawScreen *draw,
 			settings->windowY = wy;
 			settings->windowW = ww;
 			settings->windowH = wh;
-			dirt |= mxv2::Settings::kFieldWindowPos;
+			dirt |= mxv2::Settings::Field::WindowPos;
 		}
 	}
 	return dirt;
@@ -184,19 +189,19 @@ unsigned CollectDirtyFields(mxv2::Settings *settings, mxv2::DrawScreen *draw,
 
 // ---- 画面の向きでスキンを切り替える（screen_orientation.md） --------------
 
-// ---- 窓の大きさの知らせを描画スレッドで配り直す（Android） ----------------
+// ---- ウィンドウの大きさの知らせを描画スレッドで配り直す（Android） ----------------
 //
-// SDL2 の Android は、窓の大きさの変化を **Java の UI スレッドから** 配る
+// SDL2 の Android は、ウィンドウの大きさの変化を **Java の UI スレッドから** 配る
 // （SDLSurface.surfaceChanged → onNativeResize → SDL_SendWindowEvent）。配る途中で
 // レンダラーの event watch（SDL_RendererEventWatch）が同じ UI スレッドで走り、
-// 描画先を窓へ切り替えて戻し、ビューポートの命令を積む。GL の文脈は描画スレッドの
+// 描画先をウィンドウへ切り替えて戻し、ビューポートの命令を積む。GL の文脈は描画スレッドの
 // ものなので eglMakeCurrent は EGL_BAD_ACCESS で失敗し、SDL の控え（描画先・
 // 命令の列）だけが描画スレッドと取り合いで書き換わる。素早く縦横を替えると、
 // 画面が上下逆・赤青反転・古い絵のまま固まった（2026-09-25、screen_orientation.md）。
 //
 // 対処: UI スレッドから来た大きさの知らせはイベントフィルターで捨てて印だけ立て、
 // 描画スレッドのフレームの頭で SIZE_CHANGED を積み直す（積み直した知らせでは
-// event watch が描画スレッドで走る）。窓の大きさそのもの（SDL_GetWindowSize）は
+// event watch が描画スレッドで走る）。ウィンドウの大きさそのもの（SDL_GetWindowSize）は
 // 捨てる前に SDL が書き換え済み。
 SDL_atomic_t g_resizePending;
 
@@ -246,17 +251,17 @@ void RepostResizeEvent(SDL_Window *window) {
 // 流れは進むので、そのままだと止めていた長さだけ TV が遅れる）。
 static void PollCast(mxv2::Player *player, AutoPause *autoPause) {
 	switch (mxv2::cast::Poll()) {
-		case mxv2::cast::kEventEnded:
-			*autoPause = kAutoPauseNone;
+		case mxv2::cast::Event::Ended:
+			*autoPause = AutoPause::None;
 			if (player->playing() && !player->paused()) player->Pause();
 			mxv2::cast::Stop();
 			break;
-		case mxv2::cast::kEventRemotePause:
-			*autoPause = kAutoPauseNone;
+		case mxv2::cast::Event::RemotePause:
+			*autoPause = AutoPause::None;
 			if (player->playing() && !player->paused()) player->Pause();
 			break;
-		case mxv2::cast::kEventRemotePlay:
-			*autoPause = kAutoPauseNone;
+		case mxv2::cast::Event::RemotePlay:
+			*autoPause = AutoPause::None;
 			if (player->paused()) player->Resume();
 			mxv2::cast::ResumeRemote();
 			break;
@@ -413,7 +418,7 @@ int main(int argc, char **argv) {
 	bool startFound = false;
 	// Android: ファイルマネージャなどから渡されたものは **URI** で届く
 	// （openintent.h）。すでに許可のあるフォルダの中なら、そのまま開く場所と
-	// して使える。外なら**窓が出てから尋ねる**ので、ここでは預かるだけにする
+	// して使える。外なら**ウィンドウが出てから尋ねる**ので、ここでは預かるだけにする
 	// （ダイアログを出すには UI が要る。許可を取るか、写して鳴らすか）。
 	std::string startHandedUri;
 	if (!opt.target.empty() && mxv2::openintent::IsUri(opt.target)) {
@@ -546,14 +551,14 @@ int main(int argc, char **argv) {
 
 	// ini のファイルシステム一覧を直したときは書き戻す（仕様どおり、
 	// 読み込みを終えてから 1 回だけ）。
-	if (dirtyFileSystems) dirtyFields |= mxv2::Settings::kFieldFileSystems;
-	if (dirtyBookmarks) dirtyFields |= mxv2::Settings::kFieldBookmarks;
+	if (dirtyFileSystems) dirtyFields |= mxv2::Settings::Field::FileSystems;
+	if (dirtyBookmarks) dirtyFields |= mxv2::Settings::Field::Bookmarks;
 
 	int defaultZoom = 100;
 	{
 		const int systemZoom = mxv2::Screen::SystemZoomPercent();
 		// ini に倍率が無ければ、ここで決めた値を書き残す（初回起動で定着させる）。
-		if (settings.zoomPercent <= 0) dirtyFields |= mxv2::Settings::kFieldZoom;
+		if (settings.zoomPercent <= 0) dirtyFields |= mxv2::Settings::Field::Zoom;
 		defaultZoom = (legacyScale > 0) ? legacyScale * systemZoom : systemZoom;
 		if (defaultZoom < mxv2::Screen::kZoomMin) defaultZoom = mxv2::Screen::kZoomMin;
 		if (defaultZoom > mxv2::Screen::kZoomMax) defaultZoom = mxv2::Screen::kZoomMax;
@@ -590,19 +595,19 @@ int main(int argc, char **argv) {
 #endif
 	if (opt.orient >= 0) orientEnabled = (opt.orient != 0);
 	if (opt.skinSet) orientEnabled = false;
-	screen.SetOrientationLock(opt.orientLock);
+	screen.SetOrientationLock(static_cast<mxv2::Screen::OrientationLock>(opt.orientLock));
 
 	// 起動時の向き。**ウィンドウを作る前**なので画面のほうを見る
 	// （SDL_Init(SDL_INIT_VIDEO) は済んでいる）。「縦画面のみ」「横画面のみ」の
 	// ときは見るまでもなく決まっているので、OrientationForMode が捨てる。
-	mxv2::Screen::Orientation orientNow = mxv2::Screen::kLandscape;
+	mxv2::Screen::Orientation orientNow = mxv2::Screen::Orientation::Landscape;
 	if (orientEnabled) {
 		orientNow = OrientationForMode(settings.orientationMode, screen.displayOrientation());
 	}
 	// いま使うべきスキン。機能 OFF なら今までどおり [Screen] Skin。
 	const std::string wantSkin =
 	    !orientEnabled ? settings.skinName
-	                   : ((orientNow == mxv2::Screen::kPortrait) ? settings.skinPortrait
+	                   : ((orientNow == mxv2::Screen::Orientation::Portrait) ? settings.skinPortrait
 	                                                            : settings.skinLandscape);
 
 	// スキンが画面サイズを決めるので、ウィンドウより先に読む。
@@ -646,7 +651,7 @@ int main(int argc, char **argv) {
 		// 前回の大きさに戻す。**縮める方向には戻さない**（表示倍率が
 		// 100% を割るとキャンバスが潰れるので、宣言サイズ x 表示倍率を
 		// 下限にする）。伸びたぶんはファイラーの行数として戻ってくる。
-		// **窓の大きさを決められるプラットフォームだけ**（Android では窓＝画面で、
+		// **ウィンドウの大きさを決められるプラットフォームだけ**（Android ではウィンドウ＝画面で、
 		// SDL_SetWindowSize を呼ぶと SDL 側の記録だけがずれる。Screen の
 		// CanResizeWindow のコメント）。
 		if (mxv2::Screen::CanResizeWindow() && settings.windowW > 0 &&
@@ -658,31 +663,31 @@ int main(int argc, char **argv) {
 			SDL_SetWindowSize(screen.window(), w, h);
 		}
 		// 前回最大化で終えていたら、最大化で始める（[Position] Maximized）。
-		// 位置と大きさを決めたあとに掛けるので、元に戻すと覚えていた窓になる。
+		// 位置と大きさを決めたあとに掛けるので、元に戻すと覚えていたウィンドウになる。
 		if (settings.windowMaximized) screen.Maximize();
 		// 前回フルスクリーンで終えていたら、その状態で始める（-fullscreen も
-		// ここを通る）。**窓の大きさを戻したあとに掛ける**ことで、SDL が
-		// 「フルスクリーンをやめたときの大きさ」として前回の窓を覚える。
+		// ここを通る）。**ウィンドウの大きさを戻したあとに掛ける**ことで、SDL が
+		// 「フルスクリーンをやめたときの大きさ」として前回のウィンドウを覚える。
 		if (settings.fullScreen && mxv2::Screen::CanFullScreen()) {
 			screen.SetFullScreen(true);
 		}
 		// 前回最小化で終えていたら、最小化で始める（旧 mxv の
 		// [Position] Iconic）。**位置と大きさを決めたあとに掛ける**ことで、
-		// 元に戻したときに覚えていた窓になる。
+		// 元に戻したときに覚えていたウィンドウになる。
 		if (settings.windowIconic) screen.Minimize();
 
-		// ここまでの見た目を決めてから窓を出す。**Open() は隠して作る**ので、
+		// ここまでの見た目を決めてからウィンドウを出す。**Open() は隠して作る**ので、
 		// これを呼ばないと画面に何も出ない（screen.h の Open のコメント）。
 		screen.Show();
 
 		// 2 つめの mxv2 からの依頼を受け取れるようにする（多重起動の抑止）。
-		// 窓の handle を渡すのは、依頼が来たときに前面へ出すため。
+		// ウィンドウの handle を渡すのは、依頼が来たときに前面へ出すため。
 		mxv2::singleinstance::Start(screen.nativeWindowHandle());
 		screen.SetScaleMode(
-		    mxv2::Screen::ScaleModeFromName(settings.scaleFilter, mxv2::Screen::kScaleSharp));
+		    mxv2::Screen::ScaleModeFromName(settings.scaleFilter, mxv2::Screen::ScaleMode::Sharp));
 		// 綴りが違っていたら解決後の名前で書き直す。
 		const std::string resolved = mxv2::Screen::ScaleModeName(screen.scaleMode());
-		if (settings.scaleFilter != resolved) dirtyFields |= mxv2::Settings::kFieldFilter;
+		if (settings.scaleFilter != resolved) dirtyFields |= mxv2::Settings::Field::Filter;
 		settings.scaleFilter = resolved;
 	}
 
@@ -821,8 +826,8 @@ int main(int argc, char **argv) {
 	// 画面の向きが変わったときに入る。
 	std::string pendingSkin;
 
-	// 窓の大きさが変わった印。フレームの頭でキャンバスを合わせ直す。
-	// 起動直後にも 1 回通して、窓の縦横比にキャンバスを寄せる。
+	// ウィンドウの大きさが変わった印。フレームの頭でキャンバスを合わせ直す。
+	// 起動直後にも 1 回通して、ウィンドウの縦横比にキャンバスを寄せる。
 	bool windowResized = true;
 
 	bool quit = false;
@@ -830,7 +835,7 @@ int main(int argc, char **argv) {
 	bool inBackground = false;
 	// 他のアプリに音を譲った・出力先が外れたので止めた（通知の窓口から来る）。
 	// 都合が解けたときに自動で再開してよいかの印。
-	AutoPause autoPause = kAutoPauseNone;
+	AutoPause autoPause = AutoPause::None;
 	// 音の途切れを知らせた回数と、次に知らせてよい時刻。
 	uint32_t underrunsSeen = 0;
 	uint32_t underrunNextMs = 0;
@@ -910,7 +915,7 @@ int main(int argc, char **argv) {
 	bool dropGroup = false;
 
 	// 外から渡された MDX（Android の VIEW インテント。openintent.h）の待ち行列。
-	// 起動のときに預かったぶんを先頭に置く（窓が出てから尋ねるため）。
+	// 起動のときに預かったぶんを先頭に置く（ウィンドウが出てから尋ねるため）。
 	std::vector<std::string> handedUris;
 	if (!startHandedUri.empty()) handedUris.push_back(startHandedUri);
 
@@ -919,8 +924,8 @@ int main(int argc, char **argv) {
 
 	while (!quit) {
 		// 小窓（ピクチャー・イン・ピクチャー。memo/pip.md）の出し入れの間は、
-		// 窓の大きさが落ち着いていない。そこで向きを見たりキャンバスを窓へ
-		// 合わせたりすると、**小さな横長の窓を見て横向き用のスキンへ
+		// ウィンドウの大きさが落ち着いていない。そこで向きを見たりキャンバスをウィンドウへ
+		// 合わせたりすると、**小さな横長のウィンドウを見て横向き用のスキンへ
 		// 切り替えてしまう**ので、どちらもしない。抜けたら合わせ直す。
 		// 小窓の間は SDL の面を隠しているので、描くのはバックグラウンドと
 		// 同じく止まっている。
@@ -929,15 +934,15 @@ int main(int argc, char **argv) {
 		pipWasActive = pipActive;
 
 		// 画面の向きが変わったらスキンを取り替える（screen_orientation.md）。
-		// 見るのは窓の縦横比で、端末の「自然な向き」ではない（Screen の
+		// 見るのはウィンドウの縦横比で、端末の「自然な向き」ではない（Screen の
 		// コメント）。「常に切り替える」以外は起動時（と設定を閉じたとき）に
 		// 決めたきりなので、ここでは何もしない。
-		if (orientEnabled && settings.orientationMode == mxv2::Settings::kOrientAlways &&
+		if (orientEnabled && settings.orientationMode == mxv2::Settings::OrientationMode::Always &&
 		    !pipActive) {
 			const mxv2::Screen::Orientation now = screen.orientation();
 			if (now != orientNow) {
 				orientNow = now;
-				pendingSkin = (now == mxv2::Screen::kPortrait) ? settings.skinPortrait
+				pendingSkin = (now == mxv2::Screen::Orientation::Portrait) ? settings.skinPortrait
 				                                               : settings.skinLandscape;
 				// 出ていたメニューは閉じる（ユーザーの指示）。回転すると
 				// メニューが画面をはみ出すことがあり、配置を計算し直して
@@ -950,7 +955,7 @@ int main(int argc, char **argv) {
 		// スキンの差し替え。設定ウィンドウで選ばれたときと、画面の向きが
 		// 変わったとき（screen_orientation.md）に来る。
 		//
-		// **キャンバスを窓へ合わせるより前に置くこと。** 逆だと、回転した
+		// **キャンバスをウィンドウへ合わせるより前に置くこと。** 逆だと、回転した
 		// フレームでキャンバスだけ先に追従して、1 フレームぶん「旧スキンが
 		// 引き伸びた絵」が出る。
 		if (!pendingSkin.empty()) {
@@ -1014,14 +1019,14 @@ int main(int argc, char **argv) {
 				player.RequestStatusRefresh();
 				chromeRefresh = true;
 				fileListRefresh = true;
-				// 宣言サイズが同じスキンへ移ったときは窓の大きさが変わらず、
+				// 宣言サイズが同じスキンへ移ったときはウィンドウの大きさが変わらず、
 				// リサイズのイベントも来ない。分割が違えばキャンバスは
 				// 変わるので、次のフレームで合わせ直させる。
 				windowResized = true;
 			}
 		}
 
-		// 窓の大きさが変わっていたらキャンバスを作り直す。イベントごとでは
+		// ウィンドウの大きさが変わっていたらキャンバスを作り直す。イベントごとでは
 		// なくフレームに 1 回にすることが、そのままリサイズ中のデバウンスに
 		// なる。表示倍率やスキンを変えたあとの追随もここが受け持つ。
 		// 小窓の出し入れの間は印を立てたまま待つ（上の pipActive）。
@@ -1041,7 +1046,7 @@ int main(int argc, char **argv) {
 			}
 		}
 
-		// UI スレッドから来て捨てた窓の大きさの知らせを、ここ（描画スレッド）で積み直す。
+		// UI スレッドから来て捨てたウィンドウの大きさの知らせを、ここ（描画スレッド）で積み直す。
 		RepostResizeEvent(screen.window());
 
 		SDL_Event ev;
@@ -1126,7 +1131,7 @@ int main(int argc, char **argv) {
 			const bool isKey = (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP ||
 			                    ev.type == SDL_TEXTINPUT);
 			// 右クリックのコンテキストメニューは ImGui 側が自分で拾う
-			// （SettingsUi::BuildContextMenu の BeginPopupContextVoid）。
+			// （ContextMenu::Build の BeginPopupContextVoid）。
 			// ESC は mxv2 では終了に割り当ててあるので、そちらには足さない。
 			if (isMouse && ui.wantCaptureMouse()) {
 				// チュートリアル中で他のダイアログが無ければ、吹き出しの上で
@@ -1174,7 +1179,7 @@ int main(int argc, char **argv) {
 				}
 			}
 
-			// マウス。イベントは窓の画素で届くので、キャンバスの論理座標へ
+			// マウス。イベントはウィンドウの画素で届くので、キャンバスの論理座標へ
 			// 直してから配る（当たり判定はすべて論理座標）。
 			SDL_Event mev = ev;
 			screen.WindowEventToCanvas(&mev);
@@ -1195,7 +1200,7 @@ int main(int argc, char **argv) {
 		}
 
 		// 2 つめの mxv2 が渡してきたもの。**落とされたのと同じ扱い**で開く
-		// （曲なら演奏してそのフォルダへ、フォルダならそこへ移る）。窓を
+		// （曲なら演奏してそのフォルダへ、フォルダならそこへ移る）。ウィンドウを
 		// 前面へ出すのは受け取った時点で済んでいる。渡すものが無い起動
 		// （引数なしの 2 つめ）のときは空で届くので、開くものは無い。
 		{
@@ -1233,7 +1238,7 @@ int main(int argc, char **argv) {
 				OpenHandedPath(ctx, &filer, false, ref);
 			} else if (mxv2::SafAvailable()) {
 				// 外にある。**どちらで開くかを尋ねる**（settingsui の
-				// [渡されたファイル]。答えは kRequestOpenHanded で返ってくる）。
+				// [渡されたファイル]。答えは Request::OpenHanded で返ってくる）。
 				ui.OpenHandedChoice(uri, mxv2::openintent::DisplayName(uri));
 			} else if (mxv2::openintent::CopyToUserDir(vfs, uri, &ref)) {
 				// 許可の仕組みが無い環境。写すしかない。
@@ -1287,7 +1292,7 @@ int main(int argc, char **argv) {
 						quit = true;
 					}
 					settings.sampleRate = prevRate;
-					dirtyFields |= mxv2::Settings::kFieldSampleRate;
+					dirtyFields |= mxv2::Settings::Field::SampleRate;
 				}
 				if (ok) {
 					player.SetMainVolume(mainVol);
@@ -1349,17 +1354,17 @@ int main(int argc, char **argv) {
 		// 決まるので、ここで拾う。
 		gamepad.Poll(SDL_GetTicks());  // 上下の押し続け（キーリピート相当）
 		switch (mouse.Poll(SDL_GetTicks())) {
-			case mxv2::kMouseRequestToggleFontSize:
+			case mxv2::MouseRequest::ToggleFontSize:
 				ToggleFileListFontSize(&draw, &filer, &fileListRefresh);
 				break;
-			case mxv2::kMouseRequestToggleStatusMode:
+			case mxv2::MouseRequest::ToggleStatusMode:
 				// 欄を消して新しいモードの 0 表示を敷き、値は積み直してもらう
 				// （どちらのモードのイベントも StatusWatch が変化時にしか積まない
 				// ので、切り替えた直後は全部を頼む）。
 				draw.ToggleStatusMode();
 				player.RequestStatusRefresh();
 				break;
-			case mxv2::kMouseRequestToggleRegMap:
+			case mxv2::MouseRequest::ToggleRegMap:
 				// レジスタの写しは表示 OFF でも届いているので、積み直しは要らない。
 				draw.ToggleRegMap();
 				break;
@@ -1384,6 +1389,9 @@ int main(int argc, char **argv) {
 		ui.SetOrientationState(orientEnabled, orientNow);
 		ui.SetUpdateCheckState(updateAvailable, updateChecker.running());
 		ui.Build(&settings, &draw, &player, &filer, &screen);
+#ifdef MXV2_UITEST
+		if (mxv2::uitest::AfterBuild(&ui, screen.window())) quit = true;
+#endif
 
 		// チュートリアル（tutorial.md）。ImGui のフレームの中で、ダイアログの
 		// あとに描く（幕は背景の描画リストに置くので順番は問わない）。
@@ -1420,7 +1428,7 @@ int main(int argc, char **argv) {
 		if (tutorial.TakeMaskReset()) player.SetChannelMask(0);
 		if (tutorial.TakeFinished() && tutorial.recordDone()) {
 			settings.tutorialDone = true;
-			dirtyFields |= mxv2::Settings::kFieldTutorial;
+			dirtyFields |= mxv2::Settings::Field::Tutorial;
 		}
 		// 設定ウィンドウでスキンが選ばれていたら、次のフレームの頭で
 		// 取り替える（上のブロック）。
@@ -1432,12 +1440,12 @@ int main(int argc, char **argv) {
 		// （screen_orientation.md）。閉じた時点の向きで選び直す。
 		if (orientEnabled && ui.TakeSettingsClosed()) {
 			ApplyOrientationMode(settings.orientationMode, screen.orientation());
-			if (settings.orientationMode != mxv2::Settings::kOrientAlways) {
+			if (settings.orientationMode != mxv2::Settings::OrientationMode::Always) {
 				const mxv2::Screen::Orientation want = OrientationForMode(
 				    settings.orientationMode, screen.orientation());
 				if (want != orientNow) {
 					orientNow = want;
-					pendingSkin = (want == mxv2::Screen::kPortrait)
+					pendingSkin = (want == mxv2::Screen::Orientation::Portrait)
 					                  ? settings.skinPortrait
 					                  : settings.skinLandscape;
 				}
@@ -1457,13 +1465,13 @@ int main(int argc, char **argv) {
 			    (manual || (ready && settings.updateCheck && now >= settings.nextUpdateCheck))) {
 				if (updateChecker.Start(manual)) {
 					settings.nextUpdateCheck = now + kUpdateIntervalSec;
-					newDirt |= mxv2::Settings::kFieldUpdateSchedule;
+					newDirt |= mxv2::Settings::Field::UpdateSchedule;
 				}
 			}
 			mxv2::UpdateResult r;
 			if (updateChecker.Poll(&r)) {
 				LogUpdateResult(r);
-				if (r.status == mxv2::UpdateResult::kNewer || r.manual) {
+				if (r.status == mxv2::UpdateResult::Status::Newer || r.manual) {
 					pendingUpdate = r;
 					havePendingUpdate = true;
 				}
@@ -1475,14 +1483,14 @@ int main(int argc, char **argv) {
 		}
 
 		newDirt |= ui.TakeChangedFields();
-		if (newDirt & mxv2::Settings::kFieldPip) mxv2::pip::SetMode(settings.pipMode);
+		if (newDirt & mxv2::Settings::Field::Pip) mxv2::pip::SetMode(settings.pipMode);
 		// [ファイルシステムの設定] は Vfs のマウント一覧を直に触るので、
 		// 書き戻す前にそこから拾い直す。
-		if (newDirt & mxv2::Settings::kFieldFileSystems) {
+		if (newDirt & mxv2::Settings::Field::FileSystems) {
 			settings.fileSystems = SaveFileSystems(vfs);
 		}
 		// ブックマークが変わったら、"Bookmarks>" を開いていれば並べ直す。
-		if ((newDirt & mxv2::Settings::kFieldBookmarks) && filer.fs() != 0 &&
+		if ((newDirt & mxv2::Settings::Field::Bookmarks) && filer.fs() != 0 &&
 		    filer.fs()->isJumpList()) {
 			filer.Refresh();
 		}
@@ -1490,26 +1498,26 @@ int main(int argc, char **argv) {
 		// コンテキストメニューからの要求。フォルダの移動と終了は
 		// メインループが状態を持っているのでここで実行する。
 		switch (ui.TakeRequest()) {
-			case mxv2::SettingsUi::kRequestSetFolder:
+			case mxv2::SettingsUi::Request::SetFolder:
 				filer.SetCurrentRef(ui.requestedFolder());
 				fileListRefresh = true;
 				break;
-			case mxv2::SettingsUi::kRequestQuit:
+			case mxv2::SettingsUi::Request::Quit:
 				quit = true;
 				break;
 			// 「どちらで開くか」の答え（渡された MDX。openintent.h）。
-			case mxv2::SettingsUi::kRequestOpenHanded:
+			case mxv2::SettingsUi::Request::OpenHanded:
 				OpenHandedPath(ctx, &filer, tutorial.active(), ui.requestedHanded());
 				break;
 			// メニューの [小窓で表示]。
-			case mxv2::SettingsUi::kRequestEnterPip:
+			case mxv2::SettingsUi::Request::EnterPip:
 				mxv2::pip::Enter();
 				break;
 			// [キャストを終了]。受信側で終わったとき（PollCast）と同じく、手元を
 			// 一時停止してから終える（2026-09-26、ユーザーの指示）。先に止めるのは、
 			// 後始末で手元の消音が外れて、その場で鳴り出さないようにするため。
-			case mxv2::SettingsUi::kRequestStopCast:
-				autoPause = kAutoPauseNone;
+			case mxv2::SettingsUi::Request::StopCast:
+				autoPause = AutoPause::None;
 				if (player.playing() && !player.paused()) player.Pause();
 				mxv2::cast::Stop();
 				break;
@@ -1555,8 +1563,8 @@ int main(int argc, char **argv) {
 		fileListRefresh = false;
 
 		draw.BlitTo(&screen);
-		// Chromecast へ送っていれば、このフレームは窓と同じ大きさのテクスチャへ
-		// 描かせる（下の EndFrame で縮めて読み出し、窓へ写す。cast.h）。
+		// Chromecast へ送っていれば、このフレームはウィンドウと同じ大きさのテクスチャへ
+		// 描かせる（下の EndFrame で縮めて読み出し、ウィンドウへ写す。cast.h）。
 		mxv2::cast::BeginFrame(screen.renderer());
 		screen.Draw();
 		textLayer.Render(&screen);  // 文字は拡大後の解像度で重ねる
@@ -1612,7 +1620,7 @@ int main(int argc, char **argv) {
 	// **先に演奏を止める。** 止める間（最大 1.5 秒ほど）は手元の音の消音も
 	// 外れるので、鳴っていると手元に音が戻ってきてしまう（2026-09-25、
 	// ユーザーの指摘）。
-	if (mxv2::cast::GetState() != mxv2::cast::kIdle) player.Stop();
+	if (mxv2::cast::GetState() != mxv2::cast::State::Idle) player.Stop();
 	mxv2::cast::Shutdown();
 	mxv2::outputlatency::Shutdown();
 	ui.Shutdown();
@@ -1620,5 +1628,9 @@ int main(int argc, char **argv) {
 	player.Close();
 	screen.Close();
 	SDL_Quit();
+#ifdef MXV2_UITEST
+	return mxv2::uitest::ExitCode();
+#else
 	return EXIT_SUCCESS;
+#endif
 }

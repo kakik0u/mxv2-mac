@@ -1,16 +1,22 @@
 // mxv2 - 設定 UI の内部ヘッダ。settingsui_*.cpp だけが含める。
 //
-// SettingsUi は 1 つのクラスだが、実装はダイアログ単位でファイルを分けてある
-// （2026-09-16。1 ファイル 3500 行を超えたため）:
-//   settingsui.cpp             … 初期化・フレーム処理 (Build)・共通の小道具
-//   settingsui_settings.cpp    … [mxv2 の設定] (F1)
-//   settingsui_colors.cpp      … [配色設定] (F2)
-//   settingsui_filesystems.cpp … [ファイルシステムの設定] (F3)・SAF
-//   settingsui_bookmarks.cpp   … [ブックマークの設定] (F4)・Shift+M
-//   settingsui_pdx.cpp         … [PDX の探索先]
-//   settingsui_folder.cpp      … フォルダを選ぶ (L)
-//   settingsui_menu.cpp        … コンテキストメニュー・終了の確認
-//   settingsui_info.cpp        … [操作方法] (F11)・[バージョン情報] (F12)・起動時の警告
+// ダイアログはそれぞれ自分のクラス（settingsui_*.h / .cpp）で、SettingsUi
+// （settingsui.h / .cpp）はそれを 1 つずつ持って、開閉の入口・共通の道具・
+// 往復の配線を受け持つ（memo/settingsui-split.md）:
+//   settingsui.cpp             … SettingsUi: 初期化・フレーム処理 (Build)・共通の小道具
+//   settingsui_settings.cpp    … SettingsWindow: [mxv2 の設定] (F1)
+//   settingsui_latency.cpp     … LatencyDialog: [画面の遅れ] / [遅延時間]（[設定…] から）
+//   settingsui_colors.cpp      … ColorsDialog: [配色設定] (F2)
+//   settingsui_filesystems.cpp … FileSystemsDialog: [ファイルシステムの設定] (F3)・SAF・
+//                                渡されたファイル
+//   settingsui_bookmarks.cpp   … BookmarksDialog: [ブックマークの設定] (F4)・Shift+M
+//   settingsui_pdx.cpp         … PdxPathsDialog: [PDX の探索先]
+//   settingsui_folder.cpp      … FolderDialog: フォルダを選ぶ (L)
+//   settingsui_menu.cpp        … ContextMenu: コンテキストメニュー・終了の確認
+//   settingsui_info.cpp        … InfoDialogs: [操作方法] (F11)・[バージョン情報] (F12)・
+//                                起動時の警告
+//   settingsui_update.cpp      … UpdateDialog: 更新チェックの知らせ・[通信]
+//   settingsui_cast.cpp        … CastDialog: [キャスト] (F9)
 // ここにあるのは、複数のファイルで使う題名・定数・描画の小道具。
 
 #ifndef MXV2_SETTINGSUI_INTERNAL_H
@@ -28,6 +34,10 @@ class Player;
 
 namespace settingsui {
 
+// 画面の遅れ (ms) とサンプル数の相互変換（settingsui_settings.cpp）。
+int MsToFrames(int ms, const Player *player);
+float FramesToMs(int frames, const Player *player);
+
 // 指で押すところの高さの下限 (mm)。指の腹が当たる幅として Material Design は
 // 48dp (約 7.6mm)、Apple は 44pt (約 7mm) を勧めているが、mxv2 のダイアログは
 // 項目が多く画面が狭いので、下限として 6mm を採る。
@@ -38,7 +48,7 @@ const float kTouchTargetMm = 6.0f;
 // （2026-09-24、ユーザーの指示。320x480 / 240dpi＝縦 51mm の XS17 で、
 // バナーのメニューが縦にも横にもはみ出した）。
 // 根拠はバナーのメニューのいちばん長いページ（1 ページ目）で、項目 8 行と
-// 区切り線 3 本（1 本が行間 1 つぶん）、それに窓の上下の余白で 10 行強。
+// 区切り線 3 本（1 本が行間 1 つぶん）、それにウィンドウの上下の余白で 10 行強。
 // 1 行ぶんの余裕を足して 11。**メニューの項目を増やしたら見直すこと。**
 const float kTouchRowsMin = 11.0f;
 

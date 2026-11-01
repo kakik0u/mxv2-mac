@@ -24,16 +24,9 @@ using namespace settingsui;
 // PDX の探索先の設定。設定ウィンドウの [編集…] から。ブックマークの設定と
 // 同じ作りで、[開く] が無いだけ。並び順がそのまま探す順（MDX と同じフォルダの
 // 次に、上から順）。
-void SettingsUi::BuildPdxPathsWindow(Settings *settings, Filer *filer) {
-	if (!SyncModal(kPdxPathsTitle, &showPdxPaths_)) return;
-
-	CenterNextWindow(placeCond());
-	ImGui::SetNextWindowSize(DialogSize(460.0f, 360.0f), placeCond());
-
-	if (!ImGui::BeginPopupModal(kPdxPathsTitle, &showPdxPaths_, DialogFlags())) {
-		return;
-	}
-	if (vfs_ == 0) {
+void PdxPathsDialog::Build(SettingsUi &ui, Settings *settings, Filer *filer) {
+	if (!ui.BeginModal(kPdxPathsTitle, &show_, 460.0f, 360.0f)) return;
+	if (ui.vfs_ == 0) {
 		ImGui::TextUnformatted(Msg("FileSystems.Empty"));
 		ImGui::EndPopup();
 		return;
@@ -41,8 +34,8 @@ void SettingsUi::BuildPdxPathsWindow(Settings *settings, Filer *filer) {
 
 	std::vector<std::string> &list = settings->pdxPaths;
 	const int count = (int)list.size();
-	if (pdxSelected_ >= count) pdxSelected_ = count - 1;
-	if (pdxSelected_ < 0 && count > 0) pdxSelected_ = 0;
+	if (selected_ >= count) selected_ = count - 1;
+	if (selected_ < 0 && count > 0) selected_ = 0;
 
 	{
 		const float foot = ImGui::GetFrameHeightWithSpacing() * 2.0f +
@@ -51,54 +44,52 @@ void SettingsUi::BuildPdxPathsWindow(Settings *settings, Filer *filer) {
 		if (count == 0) ImGui::TextDisabled("%s", Msg("PdxPath.Empty"));
 		for (int i = 0; i < count; i++) {
 			char label[512];
-			snprintf(label, sizeof(label), "%s##pdx%d", vfs_->DisplayPath(list[i]).c_str(), i);
-			if (ImGui::Selectable(label, i == pdxSelected_) && !dragMoved_) {
-				pdxSelected_ = i;
-				pdxError_.clear();
+			snprintf(label, sizeof(label), "%s##pdx%d", ui.vfs_->DisplayPath(list[i]).c_str(), i);
+			if (ImGui::Selectable(label, i == selected_) && !ui.dragMoved_) {
+				selected_ = i;
+				error_.clear();
 			}
 			// 表示は見やすさ優先で DisplayPath なので、生の ref はここで見せる。
 			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", list[i].c_str());
 		}
-		DragToScroll(&dragScroll_, &dragMoved_, false, true);
+		DragToScroll(&ui.dragScroll_, &ui.dragMoved_, false, true);
 		ImGui::EndChild();
 	}
 
-	if (pdxError_.empty()) {
+	if (error_.empty()) {
 		TextNote(Msg("PdxPath.Hint"));
 	} else {
-		TextError(pdxError_.c_str());
+		TextError(error_.c_str());
 	}
 
 	// [上へ] [下へ]。端まで来たら押せなくする。
-	ImGui::BeginDisabled(pdxSelected_ <= 0);
+	ImGui::BeginDisabled(selected_ <= 0);
 	if (ImGui::Button(Msg("Button.Up"))) {
-		std::swap(list[pdxSelected_], list[pdxSelected_ - 1]);
-		pdxSelected_--;
-		changedFields_ |= Settings::kFieldPdxPaths;
+		std::swap(list[selected_], list[selected_ - 1]);
+		selected_--;
+		ui.changedFields_ |= Settings::Field::PdxPaths;
 	}
 	ImGui::EndDisabled();
 	ImGui::SameLine();
-	ImGui::BeginDisabled(pdxSelected_ < 0 || pdxSelected_ >= count - 1);
+	ImGui::BeginDisabled(selected_ < 0 || selected_ >= count - 1);
 	if (ImGui::Button(Msg("Button.Down"))) {
-		std::swap(list[pdxSelected_], list[pdxSelected_ + 1]);
-		pdxSelected_++;
-		changedFields_ |= Settings::kFieldPdxPaths;
+		std::swap(list[selected_], list[selected_ + 1]);
+		selected_++;
+		ui.changedFields_ |= Settings::Field::PdxPaths;
 	}
 	ImGui::EndDisabled();
 
 	// [追加…] はフォルダ選択ダイアログを経由して、選んだフォルダを選択位置へ
 	// 挿し込む（ブックマークの設定と同じ往復）。開始位置は選んでいる探索先
-	// （Build() の folderOpenPending_ のところ）。
+	// （FolderDialog::PollOpen）。
 	(void)filer;
 	const bool full = (count >= Settings::kMaxPdxPaths);
 	ImGui::SameLine();
 	ImGui::BeginDisabled(full);
 	if (ImGui::Button(Msg("Button.AddPdxPath"))) {
-		pdxError_.clear();
-		folderTarget_ = kFolderTargetPdx;
-		folderReturnToPdx_ = true;
-		folderOpenPending_ = true;
-		showPdxPaths_ = false;
+		error_.clear();
+		ui.OpenFolderFor(FolderDialog::Target::Pdx, FolderDialog::Return::Pdx);
+		show_ = false;
 	}
 	ImGui::EndDisabled();
 	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -106,57 +97,61 @@ void SettingsUi::BuildPdxPathsWindow(Settings *settings, Filer *filer) {
 	}
 
 	ImGui::SameLine();
-	ImGui::BeginDisabled(pdxSelected_ < 0);
+	ImGui::BeginDisabled(selected_ < 0);
 	if (ImGui::Button(Msg("Button.Remove"))) {
-		pdxError_.clear();
-		pdxOpenRemove_ = true;
+		error_.clear();
+		remove_.ask = true;
 	}
 	ImGui::EndDisabled();
 
-	BuildPdxRemoveWindow(settings);
+	BuildRemoveWindow(ui, settings);
 
 	ImGui::EndPopup();
 }
 
+void PdxPathsDialog::OpenFromSettings(SettingsUi &ui) {
+	selected_ = 0;
+	error_.clear();
+	handoff_.Start();
+	ui.SetSettingsVisible(false);
+}
+
+void PdxPathsDialog::PollOpen() {
+	handoff_.OpenWhenCallerClosed(&show_, kSettingsTitle);
+}
+
+bool PdxPathsDialog::TakeReturn(bool folderBusy) {
+	return handoff_.TakeReturn(show_, kPdxPathsTitle, folderBusy);
+}
+
+void PdxPathsDialog::Insert(std::vector<std::string> *list, const std::string &ref) {
+	const int count = (int)list->size();
+	const int at = (selected_ >= 0 && selected_ <= count) ? selected_ : count;
+	list->insert(list->begin() + at, ref);
+	selected_ = at;
+}
+
 // 「本当に削除するか」。PDX の探索先の中に入れ子で開く。
-void SettingsUi::BuildPdxRemoveWindow(Settings *settings) {
-	if (pdxOpenRemove_) {
-		pdxOpenRemove_ = false;
-		ImGui::OpenPopup(kPdxRemoveTitle);
-	}
-
-	pdxRemoveOpen_ = ImGui::IsPopupOpen(kPdxRemoveTitle);
-	if (!pdxRemoveOpen_) {
-		pdxCloseRemove_ = false;
-		return;
-	}
-
-	CenterNextWindow(placeCond());
-	if (!ImGui::BeginPopupModal(kPdxRemoveTitle, NULL,
-	                            DialogFlags() | ImGuiWindowFlags_AlwaysAutoResize)) {
-		return;
-	}
+void PdxPathsDialog::BuildRemoveWindow(SettingsUi &ui, Settings *settings) {
+	if (!remove_.Begin(ui, kPdxRemoveTitle)) return;
 
 	std::vector<std::string> &list = settings->pdxPaths;
-	const bool valid = (pdxSelected_ >= 0 && pdxSelected_ < (int)list.size());
+	const bool valid = (selected_ >= 0 && selected_ < (int)list.size());
 	ConfirmText(MsgF("PdxPath.RemoveConfirm",
-	                 (valid && vfs_ != 0) ? vfs_->DisplayPath(list[pdxSelected_])
+	                 (valid && ui.vfs_ != 0) ? ui.vfs_->DisplayPath(list[selected_])
 	                                      : std::string())
 	                .c_str());
 	ImGui::Separator();
 	if (ImGui::Button(Msg("Button.Remove"))) {
 		if (valid) {
-			list.erase(list.begin() + pdxSelected_);
-			if (pdxSelected_ >= (int)list.size()) pdxSelected_ = (int)list.size() - 1;
-			changedFields_ |= Settings::kFieldPdxPaths;
+			list.erase(list.begin() + selected_);
+			if (selected_ >= (int)list.size()) selected_ = (int)list.size() - 1;
+			ui.changedFields_ |= Settings::Field::PdxPaths;
 		}
 		ImGui::CloseCurrentPopup();
 	}
 	ImGui::SameLine();
-	if (ImGui::Button(Msg("Button.Cancel")) || pdxCloseRemove_) {
-		pdxCloseRemove_ = false;
-		ImGui::CloseCurrentPopup();
-	}
+	remove_.CancelButton(Msg("Button.Cancel"));
 	ImGui::EndPopup();
 }
 

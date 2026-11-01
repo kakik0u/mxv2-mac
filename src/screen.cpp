@@ -46,8 +46,8 @@ Screen::Screen()
       width_(0),
       height_(0),
       zoom_(100),
-      orientLock_(kOrientLockNone),
-      scaleMode_(kScaleSharp),
+      orientLock_(OrientationLock::None),
+      scaleMode_(ScaleMode::Sharp),
       preTexture_(0),
       preScale_(0) {}
 
@@ -57,9 +57,9 @@ Screen::~Screen() {
 
 int Screen::SystemZoomPercent() {
 #if defined(__ANDROID__) || defined(__APPLE__)
-	// macOS の窓サイズは論理ポイント。Retina の実ピクセル倍率は SDL が
+	// macOS のウィンドウサイズは論理ポイント。Retina の実ピクセル倍率は SDL が
 	// 扱うので、物理 DPI をさらに掛けると二重に拡大される。
-	// Android の窓は画面いっぱいで、拡大は SDL_RenderSetLogicalSize が
+	// Android のウィンドウは画面いっぱいで、拡大は SDL_RenderSetLogicalSize が
 	// 面倒を見る（余った側は帯になる）。DPI から出すと 400% などになって
 	// 意味を持たないので、等倍を既定にする。
 	return 100;
@@ -166,8 +166,8 @@ bool Screen::Open(const std::string &title, int width, int height, int zoomPerce
 	height_ = height;
 
 	// **隠して作る**（screen.h の Open のコメント）。覚えていた位置や最大化は
-	// 窓ができてからでないと掛けられないので、掛け終えてから Show() で出す。
-	// 窓の置き場所が無いモバイルでは隠さない（そのまま画面に出る）。
+	// ウィンドウができてからでないと掛けられないので、掛け終えてから Show() で出す。
+	// ウィンドウの置き場所が無いモバイルでは隠さない（そのまま画面に出る）。
 	Uint32 windowFlags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
 	if (CanResizeWindow()) windowFlags |= SDL_WINDOW_HIDDEN;
 	window_ = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -193,7 +193,7 @@ bool Screen::Open(const std::string &title, int width, int height, int zoomPerce
 	// その変換は「いま論理サイズが入っているか」を見て行われる。mxv2 は
 	// 文字と設定 UI を実解像度で描くために毎フレーム論理サイズを外して
 	// 戻しており、**Android はタッチが Java の UI スレッドから飛んでくる**
-	// ので、外している隙に届いたイベントだけ変換されずに素の窓の座標で
+	// ので、外している隙に届いたイベントだけ変換されずに素のウィンドウの座標で
 	// 入ってくる（同じ場所を叩いても効いたり効かなかったりする）。
 	// 拡大もマウス座標の変換も自分で行う（CanvasRect / WindowToCanvas）。
 	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");  // ドット絵なので最近傍
@@ -270,9 +270,9 @@ void Screen::FillRect(int x, int y, int w, int h, uint32_t argb) {
 
 const char *Screen::ScaleModeName(ScaleMode mode) {
 	switch (mode) {
-		case kScaleNearest:
+		case ScaleMode::Nearest:
 			return "nearest";
-		case kScaleLinear:
+		case ScaleMode::Linear:
 			return "linear";
 		default:
 			return "sharp";
@@ -280,9 +280,9 @@ const char *Screen::ScaleModeName(ScaleMode mode) {
 }
 
 Screen::ScaleMode Screen::ScaleModeFromName(const std::string &name, ScaleMode fallback) {
-	if (name == "nearest") return kScaleNearest;
-	if (name == "linear") return kScaleLinear;
-	if (name == "sharp" || name == "sharp-bilinear") return kScaleSharp;
+	if (name == "nearest") return ScaleMode::Nearest;
+	if (name == "linear") return ScaleMode::Linear;
+	if (name == "sharp" || name == "sharp-bilinear") return ScaleMode::Sharp;
 	return fallback;
 }
 
@@ -291,9 +291,9 @@ void Screen::SetScaleMode(ScaleMode mode) {
 	// キャンバスは sharp のときも最近傍。ぼかすのは 2 段目だけ。
 	if (texture_ != 0) {
 		SDL_SetTextureScaleMode(
-		    texture_, (mode == kScaleLinear) ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+		    texture_, (mode == ScaleMode::Linear) ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
 	}
-	if (mode != kScaleSharp) ReleasePreTexture();
+	if (mode != ScaleMode::Sharp) ReleasePreTexture();
 }
 
 void Screen::ReleasePreTexture() {
@@ -335,10 +335,10 @@ void Screen::Draw() {
 
 	const SDL_Rect dst = CanvasRect();
 
-	if (scaleMode_ == kScaleSharp && EnsurePreTexture()) {
+	if (scaleMode_ == ScaleMode::Sharp && EnsurePreTexture()) {
 		// 1 段目: 最近傍で整数倍へ（中間テクスチャいっぱいに描く）。
-		// 描画先は元へ戻す（NULL ＝窓とは限らない。Chromecast へ送っている間は
-		// 窓と同じ大きさのテクスチャへ描いている。cast.h）。
+		// 描画先は元へ戻す（NULL ＝ウィンドウとは限らない。Chromecast へ送っている間は
+		// ウィンドウと同じ大きさのテクスチャへ描いている。cast.h）。
 		SDL_Texture *prevTarget = SDL_GetRenderTarget(renderer_);
 		SDL_SetRenderTarget(renderer_, preTexture_);
 		SDL_RenderCopy(renderer_, texture_, NULL, NULL);
@@ -384,19 +384,19 @@ bool Screen::ResetTextures(std::string *err) {
 
 Screen::Orientation Screen::OrientationOf(int w, int h) const {
 	// -orientlock が指定されていれば、実物は見ない（デバッグ用）。
-	if (orientLock_ == kOrientLockPortrait) return kPortrait;
-	if (orientLock_ == kOrientLockLandscape) return kLandscape;
+	if (orientLock_ == OrientationLock::Portrait) return Orientation::Portrait;
+	if (orientLock_ == OrientationLock::Landscape) return Orientation::Landscape;
 
 #ifdef __ANDROID__
 	// 正方形は縦扱い（screen_orientation.md）。スキンの分け方と揃える。
-	if (w > 0 && h > 0) return (w > h) ? kLandscape : kPortrait;
-	return kPortrait;
+	if (w > 0 && h > 0) return (w > h) ? Orientation::Landscape : Orientation::Portrait;
+	return Orientation::Portrait;
 #else
-	// デスクトップに「画面の向き」は無い。窓は自由に変形できるので
+	// デスクトップに「画面の向き」は無い。ウィンドウは自由に変形できるので
 	// 縦横比では決められず、常に横を返す。
 	(void)w;
 	(void)h;
-	return kLandscape;
+	return Orientation::Landscape;
 #endif
 }
 
@@ -444,6 +444,14 @@ bool Screen::CanFullScreen() {
 #endif
 }
 
+bool Screen::CanZoom() {
+#if defined(__ANDROID__) || defined(__IPHONEOS__)
+	return false;
+#else
+	return true;
+#endif
+}
+
 bool Screen::fullScreen() const {
 	if (window_ == 0) return false;
 	return (SDL_GetWindowFlags(window_) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
@@ -474,15 +482,15 @@ bool Screen::SetFullScreen(bool on) {
 	if (fullScreen() == on) return true;
 	// **SDL_WINDOW_FULLSCREEN は使わない。** あちらは画面の表示モードごと
 	// 切り替えるので、戻したときに他のウィンドウの配置まで崩れる。
-	// こちらはデスクトップの解像度のまま窓を広げるだけ。
+	// こちらはデスクトップの解像度のままウィンドウを広げるだけ。
 	return SDL_SetWindowFullscreen(window_, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) == 0;
 }
 
 bool Screen::Resize(int width, int height, std::string *err) {
 	if (!SetCanvasSize(width, height, err)) return false;
-	// フルスクリーン・最大化の間は窓の大きさを触らない（SDL が覚えている
+	// フルスクリーン・最大化の間はウィンドウの大きさを触らない（SDL が覚えている
 	// 「戻したときの大きさ」を壊すし、最大化も解けてしまう）。キャンバスは
-	// どのみち窓に追いかけて作り直される（SyncCanvasToWindow）。
+	// どのみちウィンドウに追いかけて作り直される（SyncCanvasToWindow）。
 	if (window_ != 0 && CanResizeWindow() && !windowSizeLocked()) {
 		SDL_SetWindowSize(window_, width_ * zoom_ / 100, height_ * zoom_ / 100);
 	}
@@ -521,8 +529,8 @@ void Screen::SetZoom(int zoomPercent) {
 	if (zoomPercent < kZoomMin) zoomPercent = kZoomMin;
 	if (zoomPercent > kZoomMax) zoomPercent = kZoomMax;
 	zoom_ = zoomPercent;
-	// フルスクリーン・最大化の間は窓の大きさを OS 側が決めているので、
-	// 倍率を窓へ掛けない（戻したときは前の窓の大きさへ戻る）。
+	// フルスクリーン・最大化の間はウィンドウの大きさを OS 側が決めているので、
+	// 倍率をウィンドウへ掛けない（戻したときは前のウィンドウの大きさへ戻る）。
 	if (window_ == 0 || !CanResizeWindow() || windowSizeLocked()) return;
 	SDL_SetWindowSize(window_, width_ * zoom_ / 100, height_ * zoom_ / 100);
 }
@@ -683,15 +691,15 @@ void Screen::SetWindowPosClamped(int x, int y) {
 		return;
 	}
 
-	// SDL の窓の座標はクライアント領域の左上なので、**枠と題名バーのぶんを
-	// 別に見る**。これを忘れると、上端へ寄せたときに題名バーが画面の外へ出る。
+	// アプリケーションウィンドウ（SDL_Window）の座標はクライアント領域の左上
+	// なので、**枠と題名バーのぶんを別に見る**。これを忘れると、上端へ寄せたときに題名バーが画面の外へ出る。
 	int top = 0, left = 0, bottom = 0, right = 0;
 	if (SDL_GetWindowBordersSize(window_, &top, &left, &bottom, &right) != 0) {
 		top = left = bottom = right = 0;
 	}
 
 	// 右下からはみ出していたら押し戻し、そのうえで左上を優先する
-	// （窓が画面より大きいときは、下や右が切れるほうがまし）。
+	// （ウィンドウが画面より大きいときは、下や右が切れるほうがまし）。
 	if (x + w + right > area.x + area.w) x = area.x + area.w - w - right;
 	if (y + h + bottom > area.y + area.h) y = area.y + area.h - h - bottom;
 	if (x - left < area.x) x = area.x + left;

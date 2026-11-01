@@ -31,55 +31,55 @@ const int kVolumeKeyStep = 5;
 // -/+ ボタンと同じ刻みにしてある。
 const int kZoomKeyStep = 25;
 
-// 表示倍率を 1 段変える。**フルスクリーンと最大化の間は効かない**——窓の
+// 表示倍率を 1 段変える。**フルスクリーンと最大化の間は効かない**——ウィンドウの
 // 大きさを OS 側が決めているので、倍率を変えても何も起きないため
 // （2026-09-18、ユーザーの指示）。
 void NudgeZoom(const InputTargets &t, int step) {
-	if (t.ctx->screen->windowSizeLocked()) return;
+	if (!Screen::CanZoom() || t.ctx->screen->windowSizeLocked()) return;
 	t.ui->RequestZoomStep(step);
 }
 
 }  // namespace
 
 // マウス・タッチの操作 (MouseInput::Handle) が返した要求を実行する。
-void HandleMouseRequest(int request, const InputTargets &t) {
+void HandleMouseRequest(MouseRequest request, const InputTargets &t) {
 	switch (request) {
-		case mxv2::kMouseRequestOpenCursor:
+		case mxv2::MouseRequest::OpenCursor:
 			OpenCursor(*t.ctx, t.filer, t.ui);
 			break;
-		case mxv2::kMouseRequestPrev: {
+		case mxv2::MouseRequest::Prev: {
 			std::string path;
 			if (t.filer->PrevMdx(&path)) {
 				StartPlay(*t.ctx, path);
 			}
 			break;
 		}
-		case mxv2::kMouseRequestNext: {
+		case mxv2::MouseRequest::Next: {
 			std::string path;
 			if (t.filer->NextMdx(&path)) {
 				StartPlay(*t.ctx, path);
 			}
 			break;
 		}
-		case mxv2::kMouseRequestReplay:
+		case mxv2::MouseRequest::Replay:
 			if (!t.currentPath->empty()) {
 				StartPlay(*t.ctx, *t.currentPath);
 			}
 			break;
-		case mxv2::kMouseRequestToggleCont:
+		case mxv2::MouseRequest::ToggleCont:
 			*t.autoNext = !*t.autoNext;
 			*t.chromeRefresh = true;
 			break;
-		case mxv2::kMouseRequestToggleRepeat:
+		case mxv2::MouseRequest::ToggleRepeat:
 			*t.autoRepeat = !*t.autoRepeat;
 			*t.chromeRefresh = true;
 			break;
-		case mxv2::kMouseRequestGoParent:
+		case mxv2::MouseRequest::GoParent:
 			// ファイラーで左へはじいた。BACKSPACE と同じ。
 			t.filer->GoParent();
 			*t.fileListRefresh = true;
 			break;
-		case mxv2::kMouseRequestContextMenu:
+		case mxv2::MouseRequest::ContextMenu:
 			t.ui->OpenContextMenu();
 			break;
 		default:
@@ -190,7 +190,7 @@ void HandleKeyDown(const SDL_KeyboardEvent &ev, const InputTargets &t) {
 		case SDLK_RETURN:
 		case SDLK_KP_ENTER:
 			// Alt+Enter はフルスクリーンの切り替え（デスクトップだけ）。
-			// 窓そのものの操作なので、ここだけ Screen を直に触る。
+			// ウィンドウそのものの操作なので、ここだけ Screen を直に触る。
 			if ((ev.keysym.mod & KMOD_ALT) != 0 && mxv2::Screen::CanFullScreen()) {
 				mxv2::Screen *screen = t.ctx->screen;
 				screen->SetFullScreen(!screen->fullScreen());

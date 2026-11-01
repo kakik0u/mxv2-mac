@@ -65,9 +65,9 @@ const float kFontSizePx = 15.0f;
 
 // ダブルクリックの判定を SDL（＝メイン画面のファイラーの clicks）に揃える。
 // ImGui の既定は 300ms・6 実ピクセル未満で、指では事実上成立しない
-// （Pixel 7a では 6px ≒ 0.4mm）。SDL は 500ms・縦横それぞれ 32 窓ピクセル
+// （Pixel 7a では 6px ≒ 0.4mm）。SDL は 500ms・縦横それぞれ 32 ウィンドウピクセル
 // 以内（SDL_mouse.c。「タッチ向けにこのくらい」との注記）。ImGui は直線
-// 距離で見るので、SDL の箱を覆うように √2 倍しておく。窓ピクセルから
+// 距離で見るので、SDL の箱を覆うように √2 倍しておく。ウィンドウピクセルから
 // 実ピクセルへの換算 (inputScale_) は毎フレーム変わりうるので、Build() で
 // 毎回入れ直す。
 const float kDoubleClickTimeSec = 0.5f;
@@ -388,9 +388,6 @@ using namespace settingsui;
 
 SettingsUi::SettingsUi()
     : ready_(false),
-      visible_(false),
-      settingsWasVisible_(false),
-      settingsClosed_(false),
       hasJapaneseFont_(false),
       styleScale_(0.0f),
       styleDisplayH_(0.0f),
@@ -402,111 +399,16 @@ SettingsUi::SettingsUi()
       relayout_(false),
       lastDisplaySize_(0.0f, 0.0f),
       vfs_(0),
-      pendingSampleRate_(0),
-      orientEnabled_(false),
-      orientation_(Screen::kLandscape),
-      localeApplyPending_(false),
-      localeChanged_(false),
-      pendingZoom_(0),
-      zoomApplyAtMs_(0),
-      zoomStepRequest_(0),
       changedFields_(0),
-      openContextMenu_(false),
-      contextMenuOpen_(false),
-      closeContextMenu_(false),
-      ctxPage_(kCtxPageMain),
-      ctxSwitchTo_(-1),
-      ctxAnimFrom_(-1),
-      ctxAnimForward_(true),
-      ctxAnimStartMs_(0),
-      ctxNoShortcut_(false),
-      request_(kRequestNone),
-      showAbout_(false),
-      showCast_(false),
-      castWasOpen_(false),
-      castSelected_(-1),
-      castLastSize_(0.0f, 0.0f),
-      castRecenter_(false),
+      request_(Request::None),
       dragScroll_(false),
       dragMoved_(false),
-      showColors_(false),
-      skinNameReset_(true),
-      saveErrorFresh_(false),
-      openOverwrite_(false),
-      overwriteOpen_(false),
-      closeOverwrite_(false),
-      showHelp_(false),
-      showFileSystems_(false),
-      showBookmarks_(false),
-      showStartup_(false),
-      bmSelected_(-1),
-      bmOpenRemove_(false),
-      bmRemoveOpen_(false),
-      bmCloseRemove_(false),
-      showPdxPaths_(false),
-      pdxOpenPending_(false),
-      pdxReturnToSettings_(false),
-      pdxSelected_(0),
-      pdxOpenRemove_(false),
-      pdxRemoveOpen_(false),
-      pdxCloseRemove_(false),
-      showLatency_(false),
-      latencyOpenPending_(false),
-      latencyReturnToSettings_(false),
-      latencyTarget_(kLatencyTargetDisplay),
-      bmOpenToggle_(false),
-      bmJumpPending_(false),
-      bmToggleOpen_(false),
-      quitAsk_(false),
-      quitOpen_(false),
-      quitClose_(false),
-      updateAvailable_(false),
-      updateRunning_(false),
-      updateCheckNow_(false),
-      updatePending_(false),
-      updateAsk_(false),
-      updateOpen_(false),
-      updateClose_(false),
-      updateNested_(false),
-      bmCloseToggle_(false),
-      fsSelected_(0),
-      fsRemoveRevoke_(true),
-      handedAsk_(false),
-      handedOpen_(false),
-      handedClose_(false),
-      safPicking_(false),
-      safRegrantFromFiler_(false),
-      addFsOpen_(false),
-      addFsShow_(false),
-      addFsClose_(false),
-      pendingBrowse_(false),
-      fsOpenConfirm_(false),
-      fsConfirmOpen_(false),
-      fsCloseConfirm_(false),
-      showFolder_(false),
-      folderTarget_(kFolderTargetFiler),
-      folderReturnToSettings_(false),
-      folderReturnToBookmarks_(false),
-      folderReturnToPdx_(false),
-      folderOpenPending_(false),
       songLoader_(0),
-      folderLister_(new DirLister()),
-      folderLoading_(false),
-      folderTicks_(0),
-      folderHasPrev_(false),
       openedModal_(0) {
-	folderPathBuf_[0] = '\0';
-	for (int i = 0; i < kCtxPageCount; i++) {
-		ctxPageSize_[i] = ImVec2(0.0f, 0.0f);
-		ctxChildWarm_[i] = false;
-	}
-	addFsPathBuf_[0] = '\0';
-	skinNameBuf_[0] = '\0';
 }
 
 SettingsUi::~SettingsUi() {
 	Shutdown();
-	delete folderLister_;
 }
 
 bool SettingsUi::Init(Screen *screen, const AssetPaths &paths, std::string *err) {
@@ -518,11 +420,13 @@ bool SettingsUi::Init(Screen *screen, const AssetPaths &paths, std::string *err)
 
 	paths_ = paths;
 	InitTitles();
-	LoadHelpRows();
-	ScanSkins();
+	info_.LoadHelpRows();
+	settings_.ScanSkins(*this);
 	// 選べる言語。同梱ぶんとユーザーフォルダの locale/ を数え上げる。
 	// **起動時に 1 度だけ**なので、ユーザーが言語を足したら起動し直す。
-	ListLocales(paths_, &locales_);
+	std::vector<LocaleInfo> locales;
+	ListLocales(paths_, &locales);
+	settings_.SetLocales(locales);
 
 	// 最初のイベントが来る前に倍率を知っておく。
 	inputScale_ = screen->WindowToOutputScale();
@@ -628,7 +532,7 @@ void SettingsUi::Shutdown() {
 void SettingsUi::ProcessEvent(const SDL_Event &ev) {
 	if (!ready_) return;
 
-	// ImGui は実ピクセルで動かす。SDL のマウスイベントは窓の座標で届くので、
+	// ImGui は実ピクセルで動かす。SDL のマウスイベントはウィンドウの座標で届くので、
 	// **渡す前に**実ピクセルへ直す（HiDPI で食い違う環境のための倍率で、
 	// ふつうは 1 倍）。ここで直さずに後から io.MousePos を上書きしても、
 	// ImGui::NewFrame() がキューを適用する際に上書きが打ち消され、
@@ -657,7 +561,7 @@ void SettingsUi::ProcessEvent(const SDL_Event &ev) {
 
 // 設定ウィンドウが閉じていても、右クリックのメニューやバージョン情報が
 // 開いていれば ImGui が入力を掴む。ImGui 自身のフラグは何も出ていなければ
-// false になるので、visible_ で先に切ってはいけない
+// false になるので、settings_.visible_ で先に切ってはいけない
 // （切ると、メニューの外を押した扱いになって開いた瞬間に閉じてしまう）。
 bool SettingsUi::wantCaptureMouse() const {
 	if (!ready_) return false;
@@ -688,7 +592,7 @@ bool SettingsUi::wantCaptureKeyboard() const {
 // 頭打ちにする。メニューもダイアログも同じ物差しで縮むので、個別の手当ては
 // 要らない。
 bool SettingsUi::ApplyScale(float scale, bool touch, float displayH) {
-	// 画面の高さを見るのは指で操作するときだけ（パソコンで窓の大きさを
+	// 画面の高さを見るのは指で操作するときだけ（パソコンでウィンドウの大きさを
 	// 変えるたびに作り直さないように）。
 	const float h = touch ? displayH : 0.0f;
 	if (scale == styleScale_ && touch == touchUi_ && h == styleDisplayH_) return false;
@@ -718,7 +622,7 @@ bool SettingsUi::ApplyScale(float scale, bool touch, float displayH) {
 
 	ImGuiStyle &style = ImGui::GetStyle();
 	style = baseStyle_;
-	// 余白や角の丸めは**字に合わせて**拡げる。字だけ大きくすると、窓の内側の
+	// 余白や角の丸めは**字に合わせて**拡げる。字だけ大きくすると、ウィンドウの内側の
 	// 余白や区切りが相対的に痩せて見える。
 	style.ScaleAllSizes(fontScale);
 	style.FontScaleDpi = fontScale;
@@ -768,6 +672,80 @@ ImGuiWindowFlags SettingsUi::DialogFlags() const {
 	return flags;
 }
 
+bool SettingsUi::BeginModal(const char *title, bool *show, float w, float h,
+                            ImGuiWindowFlags extra) {
+	if (!SyncModal(title, show)) return false;
+	CenterNextWindow(placeCond());
+	ImGui::SetNextWindowSize(DialogSize(w, h), placeCond());
+	if (h <= 0.0f) extra |= ImGuiWindowFlags_AlwaysAutoResize;
+	return BeginDialog(title, show, DialogFlags() | extra);
+}
+
+bool SettingsUi::BeginDialog(const char *title, bool *p_open, ImGuiWindowFlags flags) {
+	if (!touchUi_ || p_open == 0) return ImGui::BeginPopupModal(title, p_open, flags);
+
+	// 指で操作するときは × を題名の帯の**左端**に出す（モバイルの慣習。iOS や
+	// Android の全画面ダイアログと同じ。2026-09-30、ユーザーの指示）。ImGui の ×
+	// は右端に決め打ちなので p_open は渡さず（ImGui の × を出さない）、自分で描く。
+	// 題名は ImGui が帯の左端から描いて × と重なるので、中央寄せにする（題名の
+	// 開始位置だけをずらす手段は ImGui に無い）。寄せ方はこの呼び出しの間だけ
+	// 変えるので、× の無い確認ダイアログの題名は左寄せのまま。
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowTitleAlign,
+	                    ImVec2(0.5f, ImGui::GetStyle().WindowTitleAlign.y));
+	const bool open = ImGui::BeginPopupModal(title, NULL, flags);
+	ImGui::PopStyleVar();
+	if (!open) return false;
+
+	// 当たり判定は帯の左端から帯の高さの 1.5 倍の幅。帯の高さは指で操作するときは
+	// 部品の高さ（touchMinPx_）以上になっているので、縦は足りていて、狭いのは横だけ
+	// （ImGui の × は字の大きさの正方形でしか反応せず、r77 の 480x640 で押しにく
+	// かった）。押した位置と離した位置がどちらも中にあれば閉じる（帯の上での
+	// スクロールのドラッグなどでは閉じない）。上に入れ子のダイアログが開いている
+	// ときは、このダイアログが指の下にないので反応しない。
+	const ImGuiStyle &style = ImGui::GetStyle();
+	const ImGuiIO &io = ImGui::GetIO();
+	const ImVec2 pos = ImGui::GetWindowPos();
+	const float barH = ImGui::GetFrameHeight();
+	const ImVec2 min(pos.x, pos.y);
+	const ImVec2 max(pos.x + barH * 1.5f, pos.y + barH);
+	const ImVec2 pressedAt = io.MouseClickedPos[ImGuiMouseButton_Left];
+	const bool pressedIn =
+	    pressedAt.x >= min.x && pressedAt.x < max.x && pressedAt.y >= min.y && pressedAt.y < max.y;
+	const bool hovered = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(min, max, false);
+	if (hovered && pressedIn && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+		*p_open = false;
+	}
+	// p_open を ImGui に渡していないので、閉じるのは自分で行う（SyncModal は
+	// 「p_open=false を渡して ImGui に閉じてもらう」前提。ESC・[閉じる]・F1 も
+	// *p_open を下ろしてここへ来る）。
+	if (!*p_open) {
+		ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+		return false;
+	}
+
+	// 描く。題名が長くて × の下へ来たときは、帯の色で塗りつぶしてから × を重ねる。
+	// 形と色は ImGui の × に合わせ、押している間だけ丸く色を敷く。指は離したあとも
+	// 最後に触った位置が「乗っている」扱いで残るので、乗っているだけでは敷かない
+	// （× で閉じて開き直すと、色が付いたままに見えた）。
+	ImDrawList *dl = ImGui::GetWindowDrawList();
+	dl->PushClipRect(min, max, false);
+	dl->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_TitleBgActive), style.WindowRounding,
+	                  ImDrawFlags_RoundCornersTopLeft);
+	const float fontSize = ImGui::GetFontSize();
+	const ImVec2 center(pos.x + style.FramePadding.x + fontSize * 0.5f, pos.y + barH * 0.5f);
+	if (hovered && pressedIn && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+		dl->AddCircleFilled(center, fontSize * 0.5f + 1.0f,
+		                    ImGui::GetColorU32(ImGuiCol_ButtonActive));
+	}
+	const float e = fontSize * 0.5f * 0.7071f - 1.0f;
+	const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+	dl->AddLine(ImVec2(center.x + e, center.y + e), ImVec2(center.x - e, center.y - e), col, 1.0f);
+	dl->AddLine(ImVec2(center.x + e, center.y - e), ImVec2(center.x - e, center.y + e), col, 1.0f);
+	dl->PopClipRect();
+	return true;
+}
+
 // ---------------------------------------------------------------------------
 
 void SettingsUi::Build(Settings *settings, DrawScreen *draw, Player *player, Filer *filer,
@@ -776,21 +754,17 @@ void SettingsUi::Build(Settings *settings, DrawScreen *draw, Player *player, Fil
 
 	// キー (Ctrl +/-) で頼まれた倍率の増減。設定ダイアログの [表示倍率] を
 	// 触ったのと同じ扱いにしたいので、待たせる前にここで settings へ入れる。
-	ApplyZoomStep(settings);
+	settings_.ApplyZoomStep(*this, settings);
 
 	// 待たせていたウィンドウ倍率をここで適用する。フレームの先頭でやるので、
 	// この後の倍率の計算とマウス座標の直しは新しい大きさで揃う。
-	if (zoomApplyAtMs_ != 0 && SDL_GetTicks() >= zoomApplyAtMs_) {
-		zoomApplyAtMs_ = 0;
-		if (pendingZoom_ > 0) screen->SetZoom(pendingZoom_);
-		pendingZoom_ = 0;
-	}
+	settings_.ApplyPendingZoom(screen);
 
 	ImGui_ImplSDLRenderer2_NewFrame();
 	ImGui_ImplSDL2_NewFrame();
 
 	// ImGui は実ピクセルで描く。字の大きさはキャンバスの拡大率に合わせ、
-	// マウス座標は「窓 -> 実ピクセル」の倍率で直す（別物なので注意。
+	// マウス座標は「ウィンドウ -> 実ピクセル」の倍率で直す（別物なので注意。
 	// 前者は 2.25 倍でも、後者はふつう 1 倍）。
 	float scale = 1.0f;
 	screen->GetRenderScale(&scale, 0);
@@ -806,7 +780,7 @@ void SettingsUi::Build(Settings *settings, DrawScreen *draw, Player *player, Fil
 	}
 	{
 		ImGuiIO &io = ImGui::GetIO();
-		// 描く場所は窓の左上が原点（BeginNativeScale が論理サイズを外す）
+		// 描く場所はウィンドウの左上が原点（BeginNativeScale が論理サイズを外す）
 		// なので、ImGui の画面はキャンバスではなく**実出力そのもの**にする。
 		// キャンバスより広ければ帯のぶんまで使えるだけで、ダイアログは
 		// 画面の真ん中に出る。
@@ -818,8 +792,8 @@ void SettingsUi::Build(Settings *settings, DrawScreen *draw, Player *player, Fil
 	// 「指で操作する」。自動なら端末で決まるが、ブラウザではあとからタッチ
 	// 装置が見つかることがあるので毎フレーム見る（ApplyScale は変わった
 	// ときだけ作り直す）。
-	bool touch = (settings->touchUi == Settings::kTouchOn);
-	if (settings->touchUi == Settings::kTouchAuto) touch = Screen::TouchPreferred();
+	bool touch = (settings->touchUi == Settings::TouchUi::On);
+	if (settings->touchUi == Settings::TouchUi::Auto) touch = Screen::TouchPreferred();
 	const bool scaleChanged = ApplyScale(scale, touch, ImGui::GetIO().DisplaySize.y);
 	// 表示サイズが変わったフレーム（回転・リサイズ）は、開いている
 	// ダイアログを置き直す（placeCond）。
@@ -862,107 +836,57 @@ void SettingsUi::Build(Settings *settings, DrawScreen *draw, Player *player, Fil
 	// 選ばせないため）ので、落とすのは次に押したときにする。
 	if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) dragMoved_ = false;
 
-	// 設定ウィンドウが閉じた瞬間を拾う。× でも ESC でも ImGui が visible_ を
+	// 設定ウィンドウが閉じた瞬間を拾う。× でも ESC でも ImGui が settings_.visible_ を
 	// false にするので、代入を追うのではなく変わり目を見る。**1 フレーム
 	// 遅れて分かる**が、閉じてから効かせたいもの（縦横の切り替えかた）には
 	// それで足りる。
-	if (settingsWasVisible_ && !visible_) settingsClosed_ = true;
-	settingsWasVisible_ = visible_;
+	settings_.WatchClosed();
 
 	// 右クリックのメニューとバージョン情報は、設定ウィンドウが閉じていても出す。
-	BuildContextMenu(settings, draw, player, filer);
-	BuildAboutWindow();
-	BuildCastWindow(settings);
-	BuildColorsWindow(settings, draw, player);
+	ctx_.Build(*this, settings, draw, player, filer);
+	info_.BuildAbout(*this);
+	cast_.Build(*this, settings);
+	colors_.Build(*this, settings, draw, player);
 
 	// [言語] で選ばれた言語をここで入れ替える。ダイアログの題名も文言なので、
 	// **設定ウィンドウが閉じきってから**でないと、開いている最中に ImGui の
 	// ポップアップの id が変わってしまう（下の [参照...] と同じ作法）。
-	if (localeApplyPending_ && !ImGui::IsPopupOpen(kSettingsTitle)) {
-		localeApplyPending_ = false;
-		ApplyLocale();
-		visible_ = true;  // 新しい題名で開き直す
-	}
+	settings_.ApplyPendingLocale(*this);
 
 	// ブックマークの設定 / PDX の探索先の [追加…] から来た往復。
 	// ImGui のポップアップは同じ階層で掛け替えられないので、呼び出し元が
 	// 閉じきってからフォルダ選択を開く。
-	if (folderOpenPending_ && !ImGui::IsPopupOpen(kSettingsTitle) &&
-	    !ImGui::IsPopupOpen(kBookmarksTitle) && !ImGui::IsPopupOpen(kPdxPathsTitle)) {
-		folderOpenPending_ = false;
-		// PDX なら一覧で選んでいた探索先から（読めなければファイラーの今の
-		// 場所から）。ブックマークはファイラーの今の場所から。
-		std::string start = filer->currentRef();
-		if (folderTarget_ == kFolderTargetPdx && vfs_ != 0 && pdxSelected_ >= 0 &&
-		    pdxSelected_ < (int)settings->pdxPaths.size()) {
-			std::string ref;
-			if (vfs_->Resolve(settings->pdxPaths[pdxSelected_], filer->currentRef(), &ref) &&
-			    vfs_->IsDir(ref)) {
-				start = ref;
-			}
-		}
-		SetFolderDir(start);
-		showFolder_ = true;
-	}
-	// 設定ウィンドウの [編集…] から。同じ理由で、設定ウィンドウが閉じきってから。
-	if (pdxOpenPending_ && !ImGui::IsPopupOpen(kSettingsTitle)) {
-		pdxOpenPending_ = false;
-		showPdxPaths_ = true;
-	}
-	// [画面の遅れ] / [遅延時間] の [設定…] から。同じく設定ウィンドウが閉じきってから。
-	if (latencyOpenPending_ && !ImGui::IsPopupOpen(kSettingsTitle)) {
-		latencyOpenPending_ = false;
-		showLatency_ = true;
-	}
-	BuildFolderWindow(settings, filer);
-	PollSafPicked(filer);
-	BuildFileSystemsWindow(filer);
+	folder_.PollOpen(*this, settings, filer);
+	// 設定ウィンドウの [編集…] と [設定…] から。同じ理由で、設定ウィンドウが
+	// 閉じきってから。
+	pdx_.PollOpen();
+	latency_.PollOpen();
+	folder_.Build(*this, settings, filer);
+	fs_.PollSafPicked(*this, filer);
+	fs_.Build(*this, filer);
 	// ファイラーの "Bookmarks>" で選ばれたぶん。
-	if (bmJumpPending_) {
-		bmJumpPending_ = false;
-		JumpToBookmarkRef(settings, bmJumpRef_);
-	}
-	BuildBookmarksWindow(settings, filer);
-	BuildPdxPathsWindow(settings, filer);
-	BuildLatencyWindow(settings, draw, player, screen);
-	BuildBookmarkToggleWindow(settings, filer);
-	BuildQuitWindow();
-	BuildHandedWindow(filer);
-	BuildStartupWindow();
-	BuildHelpWindow();
+	bm_.PollJump(*this, settings);
+	bm_.Build(*this, settings, filer);
+	pdx_.Build(*this, settings, filer);
+	latency_.Build(*this, settings, draw, player, screen);
+	bm_.BuildToggleWindow(*this, settings, filer);
+	ctx_.BuildQuitWindow(*this);
+	fs_.BuildHandedWindow(*this, filer);
+	info_.BuildStartup(*this);
+	info_.BuildHelp(*this);
 	// 更新の知らせ。入れ子で開いたものは [mxv2 の設定] の中で組む。
-	ScheduleUpdateWindow();
-	if (!updateNested_) BuildUpdateWindow();
-	if (folderReturnToSettings_ && !showFolder_ && !folderOpenPending_ &&
-	    !ImGui::IsPopupOpen(folderTitle())) {
-		folderReturnToSettings_ = false;
-		visible_ = true;
-	}
-	if (folderReturnToBookmarks_ && !showFolder_ && !folderOpenPending_ &&
-	    !ImGui::IsPopupOpen(folderTitle())) {
-		folderReturnToBookmarks_ = false;
-		showBookmarks_ = true;
-	}
-	if (folderReturnToPdx_ && !showFolder_ && !folderOpenPending_ &&
-	    !ImGui::IsPopupOpen(folderTitle())) {
-		folderReturnToPdx_ = false;
-		showPdxPaths_ = true;
-	}
+	update_.Schedule(*this);
+	if (!update_.nested()) update_.BuildWindow(*this);
+	// フォルダ選択を閉じたら、[追加…] で呼んだ元へ戻る（OpenFolderFor）。
+	const FolderDialog::Return to = folder_.TakeReturn();
+	if (to == FolderDialog::Return::Bookmarks) bm_.Reopen();
+	if (to == FolderDialog::Return::Pdx) pdx_.Reopen();
 	// [PDX の探索先] を閉じたら設定ウィンドウへ戻る。[追加…] のフォルダ選択へ
 	// 出ている間（と、そこから戻ってくる途中）は戻らない。
-	if (pdxReturnToSettings_ && !showPdxPaths_ && !pdxOpenPending_ && !showFolder_ &&
-	    !folderOpenPending_ && !folderReturnToPdx_ && !ImGui::IsPopupOpen(kPdxPathsTitle) &&
-	    !ImGui::IsPopupOpen(folderTitle())) {
-		pdxReturnToSettings_ = false;
-		visible_ = true;
-	}
-	if (latencyReturnToSettings_ && !showLatency_ && !latencyOpenPending_ &&
-	    !ImGui::IsPopupOpen(LatencyTitle())) {
-		latencyReturnToSettings_ = false;
-		visible_ = true;
-	}
+	if (pdx_.TakeReturn(folder_.BusyFor(FolderDialog::Return::Pdx))) settings_.SetVisible(true);
+	if (latency_.TakeReturn()) settings_.SetVisible(true);
 
-	BuildSettingsWindow(settings, draw, player, filer, screen);
+	settings_.Build(*this, settings, draw, player, filer, screen);
 }
 
 // モーダルの開閉を ImGui のポップアップ状態と同期する。
@@ -1011,6 +935,30 @@ void SettingsUi::Render(Screen *screen) {
 	// 実解像度のまま描く（キャンバスの拡大は Screen::Draw が自分で行うので、
 	// レンダラに論理サイズは入っていない）。
 	ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), screen->renderer());
+}
+
+int SettingsUi::FindBookmark(const std::vector<std::string> &list,
+                             const std::string &ref) const {
+	if (vfs_ == 0 || ref.empty()) return -1;
+	for (size_t i = 0; i < list.size(); i++) {
+		if (vfs_->SameRef(list[i], ref)) return (int)i;
+	}
+	return -1;
+}
+
+bool SettingsUi::CanBookmark(const std::string &ref) const {
+	if (vfs_ == 0 || ref.empty()) return false;
+	FileSystem *fs = 0;
+	std::string rel;
+	if (!vfs_->Parse(ref, &fs, &rel) || fs == 0) return false;
+	return !fs->isJumpList();
+}
+
+void SettingsUi::OpenBookmarkList() {
+	if (busy() || vfs_ == 0) return;
+	requestedFolder_ = vfs_->BookmarkRootRef();
+	if (requestedFolder_.empty()) return;
+	request_ = Request::SetFolder;
 }
 
 }  // namespace mxv2

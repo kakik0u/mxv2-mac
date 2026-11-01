@@ -202,6 +202,7 @@ set(MXV2_SOURCES
 	src/settings.cpp
 	src/settingsui.cpp
 	src/settingsui_settings.cpp
+	src/settingsui_latency.cpp
 	src/settingsui_colors.cpp
 	src/settingsui_filesystems.cpp
 	src/settingsui_bookmarks.cpp
@@ -211,6 +212,7 @@ set(MXV2_SOURCES
 	src/settingsui_info.cpp
 	src/settingsui_update.cpp
 	src/settingsui_cast.cpp
+	src/settingsui_dialog.cpp
 	src/cast.cpp
 	src/cast.h
 	src/singleinstance.cpp
@@ -256,6 +258,18 @@ set(MXV2_SOURCES
 	src/settings.h
 	src/settingsui.h
 	src/settingsui_internal.h
+	src/settingsui_dialog.h
+	src/settingsui_bookmarks.h
+	src/settingsui_cast.h
+	src/settingsui_colors.h
+	src/settingsui_filesystems.h
+	src/settingsui_folder.h
+	src/settingsui_info.h
+	src/settingsui_latency.h
+	src/settingsui_menu.h
+	src/settingsui_pdx.h
+	src/settingsui_settings.h
+	src/settingsui_update.h
 	src/singleinstance.h
 	src/skin.h
 	src/songloader.h
@@ -435,6 +449,55 @@ if(_mxv2_cast)
 	target_compile_definitions(mxv2 PRIVATE MXV2_CAST)
 else()
 	message(STATUS "mxv2: Chromecast への送信は組み込まない（MXV2_CAST=${MXV2_CAST}）")
+endif()
+
+# ---------------------------------------------------------------------------
+# mxv2_uitest（tools/uitest.cpp）
+#   設定 UI のダイアログの行き来（設定 → PDX → フォルダ選択 → 戻る など）を、
+#   本物のアプリで確かめる。mxv2 と同じソースを MXV2_UITEST 付きでビルドし、
+#   main.cpp のメインループから 1 フレームごとに筋書きを進める。部品の位置は
+#   ImGui のテストエンジン用フック（IMGUI_ENABLE_TEST_ENGINE）で集めるので、
+#   ImGui もその定義付きで別にビルドする（構造体の形が変わるため、mxv2 側の
+#   ソースにも同じ定義が要る。PUBLIC で伝わる）。
+#   Makefile の test-ui から SDL の dummy ドライバで走らせる（ウィンドウは出ない）。
+#   コンソールで結果を読むので、GUI アプリにはしない。
+# ---------------------------------------------------------------------------
+if(WIN32)
+	add_library(imgui_uitest STATIC
+		"${IMGUI_DIR}/imgui.cpp"
+		"${IMGUI_DIR}/imgui_draw.cpp"
+		"${IMGUI_DIR}/imgui_tables.cpp"
+		"${IMGUI_DIR}/imgui_widgets.cpp"
+		"${IMGUI_DIR}/backends/imgui_impl_sdl2.cpp"
+		"${IMGUI_DIR}/backends/imgui_impl_sdlrenderer2.cpp"
+	)
+	target_include_directories(imgui_uitest PUBLIC "${IMGUI_DIR}" "${IMGUI_DIR}/backends")
+	target_link_libraries(imgui_uitest PUBLIC sdl2)
+	target_compile_definitions(imgui_uitest PUBLIC IMGUI_ENABLE_TEST_ENGINE)
+	if(MSVC)
+		target_compile_options(imgui_uitest PRIVATE /W0)
+		target_compile_definitions(imgui_uitest PRIVATE _CRT_SECURE_NO_WARNINGS)
+	endif()
+
+	add_executable(mxv2_uitest ${MXV2_SOURCES} tools/uitest.cpp)
+	target_include_directories(mxv2_uitest PRIVATE
+		"${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tools" "${MXV2_GENERATED_DIR}")
+	target_link_libraries(mxv2_uitest PRIVATE portable_mdx sdl2 imgui_uitest
+		ole32 shell32 cfgmgr32 winhttp)
+	target_compile_definitions(mxv2_uitest PRIVATE MXV2_UITEST)
+	if(_mxv2_cast)
+		target_link_libraries(mxv2_uitest PRIVATE sdlcastg_sdl)
+		target_compile_definitions(mxv2_uitest PRIVATE MXV2_CAST)
+	endif()
+	if(MSVC)
+		target_compile_definitions(mxv2_uitest PRIVATE _CRT_SECURE_NO_WARNINGS)
+		target_compile_options(mxv2_uitest PRIVATE /W3)
+	endif()
+	# assets/ と SDL2.dll は mxv2 のビルドが同じフォルダへ置く。
+	add_dependencies(mxv2_uitest mxv2)
+	# mxv2 のソースをまるごともう 1 度ビルドするので、普段の build には入れない
+	# （make test-ui が名指しでビルドする）。
+	set_target_properties(imgui_uitest mxv2_uitest PROPERTIES EXCLUDE_FROM_ALL TRUE)
 endif()
 
 # ---------------------------------------------------------------------------

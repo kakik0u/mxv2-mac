@@ -45,7 +45,7 @@ void WarnRegrant(Warnings *box, const std::string &text, const std::string &moun
 // （2026-09-12 の決定。スキンを置き直せば次の起動で元の名前へ戻る）。
 std::string DefaultSkinFor(bool orientEnabled, mxv2::Screen::Orientation orient) {
 	if (!orientEnabled) return mxv2::MakeBundledSkinRef(mxv2::Settings::DefaultSkinName());
-	return (orient == mxv2::Screen::kPortrait) ? mxv2::Settings::DefaultSkinPortrait()
+	return (orient == mxv2::Screen::Orientation::Portrait) ? mxv2::Settings::DefaultSkinPortrait()
 	                                            : mxv2::Settings::DefaultSkinLandscape();
 }
 
@@ -205,8 +205,12 @@ void ForceRedrawAll(mxv2::Screen *screen, mxv2::TextLayer *textLayer, mxv2::Draw
 // 切り替えかたから、いま使うべき向きを決める。「起動時の方向で切り替える」と
 // 「常に切り替える」は、渡された今の向きをそのまま使う。
 mxv2::Screen::Orientation OrientationForMode(int mode, mxv2::Screen::Orientation now) {
-	if (mode == mxv2::Settings::kOrientPortraitOnly) return mxv2::Screen::kPortrait;
-	if (mode == mxv2::Settings::kOrientLandscapeOnly) return mxv2::Screen::kLandscape;
+	if (mode == mxv2::Settings::OrientationMode::PortraitOnly) {
+		return mxv2::Screen::Orientation::Portrait;
+	}
+	if (mode == mxv2::Settings::OrientationMode::LandscapeOnly) {
+		return mxv2::Screen::Orientation::Landscape;
+	}
 	return now;
 }
 
@@ -217,32 +221,32 @@ mxv2::Screen::Orientation OrientationForMode(int mode, mxv2::Screen::Orientation
 // 「常に切り替える」なら自由に回してよい。
 void ApplyOrientationMode(int mode, mxv2::Screen::Orientation now) {
 	switch (mode) {
-		case mxv2::Settings::kOrientPortraitOnly:
-			mxv2::orientlock::Set(mxv2::orientlock::kPortrait);
+		case mxv2::Settings::OrientationMode::PortraitOnly:
+			mxv2::orientlock::Set(mxv2::orientlock::Request::Portrait);
 			break;
-		case mxv2::Settings::kOrientLandscapeOnly:
-			mxv2::orientlock::Set(mxv2::orientlock::kLandscape);
+		case mxv2::Settings::OrientationMode::LandscapeOnly:
+			mxv2::orientlock::Set(mxv2::orientlock::Request::Landscape);
 			break;
-		case mxv2::Settings::kOrientStartup:
+		case mxv2::Settings::OrientationMode::Startup:
 			// 起動した（か、設定を閉じた）ときの向きで固定する。
-			mxv2::orientlock::Set((now == mxv2::Screen::kPortrait)
-			                          ? mxv2::orientlock::kPortrait
-			                          : mxv2::orientlock::kLandscape);
+			mxv2::orientlock::Set((now == mxv2::Screen::Orientation::Portrait)
+			                          ? mxv2::orientlock::Request::Portrait
+			                          : mxv2::orientlock::Request::Landscape);
 			break;
 		default:
-			mxv2::orientlock::Set(mxv2::orientlock::kFree);
+			mxv2::orientlock::Set(mxv2::orientlock::Request::Free);
 			break;
 	}
 }
 
-// 窓の大きさに合わせてキャンバスを作り直す（fullscreen.md）。
+// ウィンドウの大きさに合わせてキャンバスを作り直す（fullscreen.md）。
 //
-// スキンは「宣言サイズ」でレイアウトを持っているが、窓の縦横比がそれと
-// 違うときは、ファイラーを置いた向きだけ伸ばして窓に寄せる。伸ばせる量は
+// スキンは「宣言サイズ」でレイアウトを持っているが、ウィンドウの縦横比がそれと
+// 違うときは、ファイラーを置いた向きだけ伸ばしてウィンドウに寄せる。伸ばせる量は
 // 背景ビットマップの大きさで頭打ちになり、あふれたぶんは今までどおり
 // レターボックスになる。
 //
-// 呼ぶのは**フレームの頭で 1 回だけ**。窓のリサイズはイベントで印を立てる
+// 呼ぶのは**フレームの頭で 1 回だけ**。ウィンドウのリサイズはイベントで印を立てる
 // だけにして、ここでまとめて作り直す。これがそのままリサイズ中のデバウンスに
 // なる（ドラッグ中に何十回イベントが来ても、作り直すのは 1 フレームに 1 回）。
 // 大きさが変わっていなければ何もしない。作り直したら true。

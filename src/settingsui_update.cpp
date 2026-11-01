@@ -42,19 +42,19 @@ std::string LocalTimeText(long long t) {
 }  // namespace
 
 // [mxv2 の設定] の [通信]。更新チェックが使えない環境では見出しごと出さない。
-void SettingsUi::BuildNetworkGroup(Settings *settings) {
-	if (!updateAvailable_) return;
+void UpdateDialog::BuildNetworkGroup(SettingsUi &ui, Settings *settings) {
+	if (!available_) return;
 	if (!GroupHeader(Msg("Settings.Network"))) return;
 
 	bool on = settings->updateCheck;
 	if (ImGui::Checkbox(Msg("Settings.UpdateCheck"), &on)) {
 		settings->updateCheck = on;
-		changedFields_ |= Settings::kFieldUpdateCheck;
+		ui.changedFields_ |= Settings::Field::UpdateCheck;
 	}
 
 	// 次の更新チェックの時刻。確かめている最中・OFF・もう過ぎている
 	// （使える状態になりしだい確かめる）ときは、それぞれの言い方にする。
-	if (updateRunning_) {
+	if (running_) {
 		TextNote(Msg("Settings.UpdateRunning"));
 	} else if (!settings->updateCheck) {
 		TextNote(Msg("Settings.UpdateOff"));
@@ -66,8 +66,8 @@ void SettingsUi::BuildNetworkGroup(Settings *settings) {
 
 	// 24 時間の間隔を無視してすぐ確かめる。[更新チェックを行う] が OFF でも
 	// 押せる（明示の操作なので）。結果は成功・失敗とも知らせる。
-	ImGui::BeginDisabled(updateRunning_);
-	if (ImGui::Button(Msg("Settings.UpdateCheckNow"))) updateCheckNow_ = true;
+	ImGui::BeginDisabled(running_);
+	if (ImGui::Button(Msg("Settings.UpdateCheckNow"))) checkNow_ = true;
 	ImGui::EndDisabled();
 	GroupTrailingSpace();
 }
@@ -75,54 +75,40 @@ void SettingsUi::BuildNetworkGroup(Settings *settings) {
 // 預かった結果をどこで開くか決める。
 //   [今すぐ…] の結果で、[mxv2 の設定] が開いたまま … その中に重ねて開く
 //   それ以外 … ほかのダイアログがすべて閉じるのを待って単独で開く
-void SettingsUi::ScheduleUpdateWindow() {
+void UpdateDialog::Schedule(SettingsUi &ui) {
 	// 入れ子で開いていたのに [mxv2 の設定] が閉じた。子のポップアップも
 	// ImGui が一緒に閉じているので、こちらの控えを戻す。
-	if (updateNested_ && !visible_ && !ImGui::IsPopupOpen(kSettingsTitle)) {
-		updateNested_ = false;
-		updateAsk_ = false;
-		updateOpen_ = false;
-		updateClose_ = false;
+	if (nested_ && !ui.visible() && !ImGui::IsPopupOpen(kSettingsTitle)) {
+		nested_ = false;
+		popup_.ask = false;
+		popup_.open = false;
+		popup_.close = false;
 	}
-	if (!updatePending_ || updateOpen_ || updateAsk_) return;
-	if (updateResult_.manual && visible_) {
-		updateNested_ = true;
-		updateAsk_ = true;
-		updatePending_ = false;
+	if (!pending_ || popup_.open || popup_.ask) return;
+	if (result_.manual && ui.visible()) {
+		nested_ = true;
+		popup_.ask = true;
+		pending_ = false;
 		return;
 	}
-	if (!anyDialogOpen()) {
-		updateNested_ = false;
-		updateAsk_ = true;
-		updatePending_ = false;
+	if (!ui.anyDialogOpen()) {
+		nested_ = false;
+		popup_.ask = true;
+		pending_ = false;
 	}
 }
 
 // 結果のダイアログ。新しい版があるときは [リリースページを開く] を添える。
-void SettingsUi::BuildUpdateWindow() {
-	if (updateAsk_) {
-		updateAsk_ = false;
-		ImGui::OpenPopup(kUpdateTitle);
-	}
-	updateOpen_ = ImGui::IsPopupOpen(kUpdateTitle);
-	if (!updateOpen_) {
-		updateClose_ = false;
-		return;
-	}
+void UpdateDialog::BuildWindow(SettingsUi &ui) {
+	if (!popup_.Begin(ui, kUpdateTitle)) return;
 
-	CenterNextWindow(placeCond());
-	if (!ImGui::BeginPopupModal(kUpdateTitle, NULL,
-	                            DialogFlags() | ImGuiWindowFlags_AlwaysAutoResize)) {
-		return;
-	}
-
-	const UpdateResult &r = updateResult_;
+	const UpdateResult &r = result_;
 	switch (r.status) {
-		case UpdateResult::kNewer:
+		case UpdateResult::Status::Newer:
 			ConfirmText(MsgF("Update.Newer", r.latest).c_str());
 			ConfirmNote(MsgF("Update.Current", MXV2_APP_VERSION).c_str());
 			break;
-		case UpdateResult::kLatest:
+		case UpdateResult::Status::Latest:
 			ConfirmText(MsgF("Update.Latest", MXV2_APP_VERSION).c_str());
 			break;
 		default:
@@ -134,17 +120,19 @@ void SettingsUi::BuildUpdateWindow() {
 	ImGui::Separator();
 
 	bool close = false;
-	if (r.status == UpdateResult::kNewer) {
+	if (r.status == UpdateResult::Status::Newer) {
 		if (ImGui::Button(Msg("Button.OpenReleasePage"))) {
 			OpenUrl(r.pageUrl.c_str());
 			close = true;
 		}
 		SameLineOrWrap(Msg("Button.Close"));
 	}
-	if (ImGui::Button(Msg("Button.Close")) || updateClose_) close = true;
+	if (ImGui::Button(Msg("Button.Close"))) close = true;
 	if (close) {
-		updateClose_ = false;
+		popup_.close = false;
 		ImGui::CloseCurrentPopup();
+	} else {
+		popup_.TakeClose();  // ESC
 	}
 	ImGui::EndPopup();
 }

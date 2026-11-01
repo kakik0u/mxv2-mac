@@ -100,10 +100,10 @@ void UpdateNowPlaying(const mxv2::Player &player, const mxv2::Filer &filer,
                       const std::string &currentPath, bool playing, bool autoNext,
                       bool autoRepeat, const mxv2::Settings &settings);
 // 何の都合で自動的に一時停止したか。都合が解けたときに再開してよいかの印。
-enum AutoPause {
-	kAutoPauseNone = 0,
-	kAutoPauseFocus,  // 他のアプリに音を譲った。返してもらったら再開する
-	kAutoPauseRoute,  // 出力先が外れた。設定によっては Bluetooth の再接続で再開する
+enum class AutoPause {
+	None = 0,
+	Focus,  // 他のアプリに音を譲った。返してもらったら再開する
+	Route,  // 出力先が外れた。設定によっては Bluetooth の再接続で再開する
 };
 // 通知のボタンや、他のアプリ・ヘッドホンの都合で届いた要求を処理する。
 // settings からは、つながった Bluetooth の機器の「再接続で一時停止を解除する」を見る。
@@ -116,7 +116,7 @@ void PollUnderruns(const mxv2::Player &player, uint32_t *last, uint32_t *nextMs)
 void PollOutputLatency(mxv2::Player *player, const mxv2::Settings &settings, int *lastLoggedMs);
 // 通知に出す文言をカタログから渡す（起動時と、言語を替えたとき）。
 void SetNotifyLabels();
-// 窓の題名。songTitle が空なら "mxv2" だけ、あれば "mxv2 - 曲名"。Windows は
+// ウィンドウの題名。songTitle が空なら "mxv2" だけ、あれば "mxv2 - 曲名"。Windows は
 // "mxv2" のところが実行ファイルの名前（mxv2_debug.exe なら "mxv2_debug"。
 // ExecutableBaseName。リリース版と並べて動かしたときに見分けるため）。
 std::string WindowTitle(const std::string &songTitle);

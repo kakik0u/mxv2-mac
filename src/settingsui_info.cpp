@@ -57,23 +57,24 @@ std::string LoadAboutText() {
 // パスの打ち込みと子フォルダの一覧を持つ自前のダイアログにしてある。
 // 決まった行き先は request_ に積んで、実際の移動はメインループに任せる
 // （ファイラーの持ち物はあちらなので、コンテキストメニューと同じ作法）。
-void SettingsUi::SetStartupWarnings(const std::vector<StartupWarning> &lines) {
+void InfoDialogs::SetStartupWarnings(const std::vector<StartupWarning> &lines) {
 	startupLines_ = lines;
 	showStartup_ = !startupLines_.empty();
+}
+
+void InfoDialogs::MarkRegranted(const std::string &mountRef, const std::string &text) {
+	for (size_t i = 0; i < startupLines_.size(); i++) {
+		if (CompareNoCase(startupLines_[i].regrantRef, mountRef) != 0) continue;
+		startupLines_[i].done = true;
+		startupLines_[i].text = text;
+	}
 }
 
 // 起動時の警告。ウィンドウが出る前に起きたこと（ini から捨てた項目、
 // スキンやフォントの取りこぼし）を、最初のフレームでまとめて見せる。
 // ログにも同じものが出ているので、閉じたら二度と出さない。
-void SettingsUi::BuildStartupWindow() {
-	if (!SyncModal(kStartupTitle, &showStartup_)) return;
-
-	CenterNextWindow(placeCond());
-	ImGui::SetNextWindowSize(DialogSize(520.0f, 280.0f), placeCond());
-
-	if (!ImGui::BeginPopupModal(kStartupTitle, &showStartup_, DialogFlags())) {
-		return;
-	}
+void InfoDialogs::BuildStartup(SettingsUi &ui) {
+	if (!ui.BeginModal(kStartupTitle, &showStartup_, 520.0f, 280.0f)) return;
 
 	{
 		const float foot = ImGui::GetFrameHeightWithSpacing();
@@ -88,21 +89,16 @@ void SettingsUi::BuildStartupWindow() {
 			if (!w.regrantRef.empty() && !w.done) {
 				ImGui::PushID((int)i);
 				ImGui::Indent();
-				ImGui::BeginDisabled(safPicking_ || !SafAvailable());
+				ImGui::BeginDisabled(ui.safPicking() || !SafAvailable());
 				if (ImGui::Button(Msg("Button.Regrant"))) {
-					FileSystem *fs = (vfs_ != 0) ? vfs_->FindByMountRef(w.regrantRef) : 0;
-					if (fs != 0 && SafPickTree(fs->Root())) {
-						safPicking_ = true;
-						safRegrantRef_ = w.regrantRef;
-						safRegrantFromFiler_ = false;
-					}
+					ui.fs_.StartSafRegrant(ui, w.regrantRef, false);
 				}
 				ImGui::EndDisabled();
 				ImGui::Unindent();
 				ImGui::PopID();
 			}
 		}
-		DragToScroll(&dragScroll_, &dragMoved_, false, false);
+		DragToScroll(&ui.dragScroll_, &ui.dragMoved_, false, false);
 		ImGui::EndChild();
 	}
 	if (ImGui::Button(Msg("Button.Close"), ImVec2(-FLT_MIN, 0.0f))) showStartup_ = false;
@@ -112,7 +108,7 @@ void SettingsUi::BuildStartupWindow() {
 
 // [操作方法] の中身をカタログから作る。-h の出力と同じ一覧
 // （[HelpKeys] [HelpMouse] [HelpPad]）を、見出しを挟んで並べたもの。
-void SettingsUi::LoadHelpRows() {
+void InfoDialogs::LoadHelpRows() {
 	static const char *kParts[3][2] = {
 		{ "Help.Keys", "HelpKeys" },
 		{ "Help.Mouse", "HelpMouse" },
@@ -138,13 +134,8 @@ void SettingsUi::LoadHelpRows() {
 
 // 操作方法のダイアログ (F11 / H)。中身は -h で出すものと同じ文面で、
 // main.cpp から SetHelpText() で渡してもらう（文面を二重に持たない）。
-void SettingsUi::BuildHelpWindow() {
-	if (!SyncModal(kHelpTitle, &showHelp_)) return;
-
-	CenterNextWindow(placeCond());
-	ImGui::SetNextWindowSize(DialogSize(560.0f, 460.0f), placeCond());
-
-	if (ImGui::BeginPopupModal(kHelpTitle, &showHelp_, DialogFlags())) {
+void InfoDialogs::BuildHelp(SettingsUi &ui) {
+	if (ui.BeginModal(kHelpTitle, &showHelp_, 560.0f, 460.0f)) {
 		ImGui::BeginChild("##help", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_None);
 
 		// キー名の桁を揃えて 2 段組で出す。空白で揃えないのは、同梱フォントが
@@ -206,58 +197,52 @@ void SettingsUi::BuildHelpWindow() {
 			}
 		}
 
-		DragToScroll(&dragScroll_, &dragMoved_, false, false);
+		DragToScroll(&ui.dragScroll_, &ui.dragMoved_, false, false);
 		ImGui::EndChild();
 		ImGui::EndPopup();
 	}
 }
 
 // バージョン情報 (F12)。見出しは main から渡されたもの、本文は NOTICE。
-void SettingsUi::BuildAboutWindow() {
-	if (SyncModal(kAboutTitle, &showAbout_)) {
+void InfoDialogs::BuildAbout(SettingsUi &ui) {
+	// 大きさは画面からはみ出さないように詰める。スキンの横幅の下限は
+	// 480px なので、既定の 560px はそのままでは入らない。
+	if (ui.BeginModal(kAboutTitle, &showAbout_, 560.0f, 420.0f)) {
 		// NOTICE は初めて開くときに読む（メニューからでも F12 からでも通る）。
 		if (aboutText_.empty()) aboutText_ = LoadAboutText();
+		// 見出し（名前・版・著作権の 2 行）は折り返す。320px 幅の携帯
+		// (XS17) の縦画面で右が切れていた（2026-09-24、ユーザーの指示）。
+		TextWrappedKinsoku(aboutHeader_.c_str());
+		// GitHub のページと、そこにある NOTICE をブラウザで開く。
+		if (ImGui::Button(Msg("About.OpenGitHub"))) OpenUrl(kProjectUrl);
+		SameLineOrWrap(Msg("About.OpenNotice"));
+		if (ImGui::Button(Msg("About.OpenNotice"))) OpenUrl(kNoticeUrl);
+		ImGui::Separator();
+		// 下の枠は実行ファイルの隣の NOTICE をそのまま出したもの。
+		// 見出しと同じ行が頭に来るが、あちらは独立した配布用の文書なので
+		// 中身には手を入れない。
+		ImGui::TextDisabled("NOTICE");
+		ImGui::BeginChild("##about", ImVec2(0, 0), ImGuiChildFlags_None,
+		                  ImGuiWindowFlags_HorizontalScrollbar);
 
-		// 設定ウィンドウと同じく、開くたびに画面の中央から出す。
-		// 大きさは画面からはみ出さないように詰める。スキンの横幅の下限は
-		// 480px なので、既定の 560px はそのままでは入らない。
-		CenterNextWindow(placeCond());
-		ImGui::SetNextWindowSize(DialogSize(560.0f, 420.0f), placeCond());
-		if (ImGui::BeginPopupModal(kAboutTitle, &showAbout_, DialogFlags())) {
-			// 見出し（名前・版・著作権の 2 行）は折り返す。320px 幅の携帯
-			// (XS17) の縦画面で右が切れていた（2026-09-24、ユーザーの指示）。
-			TextWrappedKinsoku(aboutHeader_.c_str());
-			// GitHub のページと、そこにある NOTICE をブラウザで開く。
-			if (ImGui::Button(Msg("About.OpenGitHub"))) OpenUrl(kProjectUrl);
-			SameLineOrWrap(Msg("About.OpenNotice"));
-			if (ImGui::Button(Msg("About.OpenNotice"))) OpenUrl(kNoticeUrl);
-			ImGui::Separator();
-			// 下の枠は実行ファイルの隣の NOTICE をそのまま出したもの。
-			// 見出しと同じ行が頭に来るが、あちらは独立した配布用の文書なので
-			// 中身には手を入れない。
-			ImGui::TextDisabled("NOTICE");
-			ImGui::BeginChild("##about", ImVec2(0, 0), ImGuiChildFlags_None,
-			                  ImGuiWindowFlags_HorizontalScrollbar);
+		// NOTICE は等幅 80 桁で書いてある。余裕をみて 88 桁ぶんが横に
+		// 収まるところまで字を小さくする。物差しは区切り線と同じ "*"。
+		// 同梱フォント (M PLUS 1p) は "=" がかなり広く、それに合わせると
+		// 全体が小さくなりすぎたので、罫線ごと "*" に改めてある。
+		// PushFont に渡すのは**倍率を掛ける前**の大きさ (FontSizeBase)。
+		// GetFontSize() は掛けたあとの値なので渡してはいけない。
+		const float rulerW = ImGui::CalcTextSize(kAboutRuler88).x;
+		const float avail = ImGui::GetContentRegionAvail().x;
+		const bool shrink = (rulerW > avail && avail > 0.0f && rulerW > 0.0f);
+		if (shrink) ImGui::PushFont(NULL, ImGui::GetStyle().FontSizeBase * avail / rulerW);
+		ImGui::TextUnformatted(aboutText_.c_str());
+		if (shrink) ImGui::PopFont();
 
-			// NOTICE は等幅 80 桁で書いてある。余裕をみて 88 桁ぶんが横に
-			// 収まるところまで字を小さくする。物差しは区切り線と同じ "*"。
-			// 同梱フォント (M PLUS 1p) は "=" がかなり広く、それに合わせると
-			// 全体が小さくなりすぎたので、罫線ごと "*" に改めてある。
-			// PushFont に渡すのは**倍率を掛ける前**の大きさ (FontSizeBase)。
-			// GetFontSize() は掛けたあとの値なので渡してはいけない。
-			const float rulerW = ImGui::CalcTextSize(kAboutRuler88).x;
-			const float avail = ImGui::GetContentRegionAvail().x;
-			const bool shrink = (rulerW > avail && avail > 0.0f && rulerW > 0.0f);
-			if (shrink) ImGui::PushFont(NULL, ImGui::GetStyle().FontSizeBase * avail / rulerW);
-			ImGui::TextUnformatted(aboutText_.c_str());
-			if (shrink) ImGui::PopFont();
+		// 本文はドラッグでスクロールする。子ウィンドウなのでタイトルバーは無い。
+		DragToScroll(&ui.dragScroll_, &ui.dragMoved_, false, false);
 
-			// 本文はドラッグでスクロールする。子ウィンドウなのでタイトルバーは無い。
-			DragToScroll(&dragScroll_, &dragMoved_, false, false);
-
-			ImGui::EndChild();
-			ImGui::EndPopup();
-		}
+		ImGui::EndChild();
+		ImGui::EndPopup();
 	}
 }
 
